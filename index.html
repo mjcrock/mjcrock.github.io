@@ -1,42 +1,33 @@
 <!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="robots" content="noindex, nofollow">
-  <meta name="color-scheme" content="light dark">
-  <title>Personal site</title>
-  <link rel="stylesheet" href="assets/styles.css">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+<meta name="referrer" content="no-referrer">
+<meta name="robots" content="noindex,nofollow"><meta name="description" content="A private terminal interaction prototype with placeholder content.">
+<title>guest / terminal study</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%232c2533'/%3E%3Cpath d='m17 20 12 12-12 12m18 0h13' fill='none' stroke='%239dc9e8' stroke-width='5'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="style.css">
+<script type="module" src="app.js"></script>
 </head>
 <body>
-  <a class="skip-link" href="#main">Skip to content</a>
-  <header class="site-header">
-    <a class="site-mark" href="#main" aria-label="Home"><span aria-hidden="true">&#9633;</span></a>
-    <nav aria-label="Main navigation">
-      <a href="#about">About</a>
-      <a href="#projects">Projects</a>
-      <a href="#writing">Writing</a>
-      <a href="#contact">Contact</a>
-    </nav>
-  </header>
-  <main id="main" tabindex="-1">
-    <h1 class="visually-hidden">Personal site</h1>
-    <section id="about" aria-labelledby="about-heading">
-      <div class="section-heading"><span aria-hidden="true">01</span><h2 id="about-heading">About</h2></div>
-      <div class="section-content"><!-- Add approved About content here. --></div>
-    </section>
-    <section id="projects" aria-labelledby="projects-heading">
-      <div class="section-heading"><span aria-hidden="true">02</span><h2 id="projects-heading">Projects</h2></div>
-      <div class="section-content"><!-- Add approved projects here. --></div>
-    </section>
-    <section id="writing" aria-labelledby="writing-heading">
-      <div class="section-heading"><span aria-hidden="true">03</span><h2 id="writing-heading">Writing</h2></div>
-      <div class="section-content"><!-- Add approved writing links here. --></div>
-    </section>
-    <section id="contact" aria-labelledby="contact-heading">
-      <div class="section-heading"><span aria-hidden="true">04</span><h2 id="contact-heading">Contact</h2></div>
-      <div class="section-content"><!-- Add approved public contact details here. --></div>
-    </section>
-  </main>
-</body>
-</html>
+<main class="terminal" aria-label="Generic terminal prototype">
+<header class="bar"><span class="brand">guest<span class="slash"> / </span><span class="label">personal terminal</span></span><span class="mode">prototype</span></header>
+<div class="screen" id="screen" tabindex="0" aria-label="Terminal output, scroll to review previous commands">
+<div id="output" aria-label="Command results"></div>
+</div>
+<div id="announcement" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
+<section class="entry" aria-label="Command input">
+<form id="command-form" autocomplete="off">
+<label class="prompt" for="command" id="prompt">guest:~ $</label>
+<input id="command" name="command" type="text" maxlength="500" aria-label="Terminal command" aria-describedby="keyboard-help" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="send">
+<button type="submit" class="run" aria-label="Run command">↵</button>
+</form>
+<div id="completions" class="completions" hidden aria-label="Completion suggestions"></div>
+<div class="toolbar"><div class="shortcuts" aria-label="Suggested commands"><button type="button" data-command="help">help</button><button type="button" data-command="ls /">ls /</button><button type="button" data-command="open /writing/sample">sample</button></div><div class="keys"><button type="button" id="complete" title="Complete command or path">⇥<span> complete</span></button><button type="button" id="previous" aria-label="Previous command" title="Previous command">↑</button><button type="button" id="next" aria-label="Next command" title="Next command">↓</button></div></div>
+<button type="button" id="read-output" class="sr-only focus-show">Read command output</button>
+</section>
+<footer class="status"><span id="keyboard-help">Tab completes · ↑ ↓ recall · Esc cancels</span><span class="status-note">content placeholders</span></footer>
+</main>
+<noscript>This prototype needs JavaScript for its command interface. No external scripts or services are required.</noscript>
+</body></html>
