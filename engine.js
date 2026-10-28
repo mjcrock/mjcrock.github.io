@@ -12,7 +12,7 @@ export const FILES = Object.freeze({
 });
 
 const own = path => Object.prototype.hasOwnProperty.call(FILES, path);
-const validText = value => typeof value === 'string' && value.length <= LIMITS.input && !/[\u0000-\u0008\u000B-\u001F\u007F\u202A-\u202E\u2066-\u2069]/u.test(value);
+const validText = value => typeof value === 'string' && value.length <= LIMITS.input && !/[\u0000-\u0008\u000A-\u001F\u007F-\u009F\u061C\u200E\u200F\u2028-\u202E\u2066-\u2069]/u.test(value);
 const error = (cwd, message, hint = 'Type help to see available commands.') => ({cwd, kind: 'error', message, hint});
 
 export function resolvePath(raw = '.', cwd = '/') {
@@ -34,7 +34,10 @@ export function list(path) {
 
 export function execute(line, cwd = '/', history = []) {
   if (!own(cwd) || FILES[cwd].type !== 'directory') cwd = '/';
-  if (!validText(line)) return error(cwd, 'Use a single text command of at most 500 characters.');
+  if (!validText(line)) {
+    // Let the view suppress rejected control characters instead of echoing them.
+    return {...error(cwd, `Use a single text command of at most ${LIMITS.input} characters.`), invalidInput: true};
+  }
   const [command, ...args] = line.trim().split(/\s+/u).filter(Boolean);
   const result = {cwd, kind: 'empty'};
   if (!command) return result;

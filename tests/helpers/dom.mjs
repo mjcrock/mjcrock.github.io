@@ -1,0 +1,195 @@
+import {readFile} from 'node:fs/promises';
+import {runInNewContext} from 'node:vm';
+import {pathToFileURL} from 'node:url';
+
+/**
+ * Minimal deterministic DOM model for app logic, not a browser/layout emulator.
+ * It models the APIs the app uses and counts writes/reads. Real rendering,
+ * focus defaults, accessibility trees, CSP, and mobile keyboards need browser QA.
+ */
+export async function createApp({root = new URL('../../', import.meta.url), width = 1000, height = 800, viewport = true} = {}) {
+  if (typeof root === 'string') root = pathToFileURL(root.endsWith('/') ? root : `${root}/`);
+  const model = await import(new URL('engine.js', root).href);
+  const source = await readFile(new URL('app.js', root), 'utf8');
+  const metrics = {listeners: 0, geometryReads: 0, scrollWrites: 0, heightWrites: 0, framesScheduled: 0, focusCalls: []};
+  const frames = new Map();
+  let nextFrame = 0;
+  let serial = 0;
+
+  class Node {
+    constructor(tag, text = '') {
+      this.tagName = tag.toUpperCase();
+      this.nodeType = tag === '#text' ? 3 : 1;
+      this.childNodes = [];
+      this.parentNode = null;
+      this.dataset = {};
+      this.attributes = new Map();
+      this.listeners = new Map();
+      this.className = '';
+      this.hidden = false;
+      this.value = '';
+      this._text = text;
+      this._scrollTop = 0;
+      this._offsetTop = ++serial * 10;
+      this.style = new Proxy({}, {
+        get: (target, key) => target[key] ?? '',
+        set: (target, key, value) => {
+          if (key === 'height') metrics.heightWrites++;
+          target[key] = value;
+          return true;
+        },
+      });
+    }
+    get children() { return this.childNodes.filter(node => node.nodeType === 1); }
+    get firstElementChild() { return this.children[0] ?? null; }
+    get lastElementChild() { return this.children.at(-1) ?? null; }
+    get isConnected() {
+      let node = this;
+      while (node.parentNode) node = node.parentNode;
+      return node === document.documentElement;
+    }
+    get textContent() { return this._text + this.childNodes.map(node => node.textContent).join(''); }
+    set textContent(value) { this.replaceChildren(); this._text = String(value); }
+    set innerHTML(_) { throw new Error('Unsafe HTML assignment: use textContent/DOM nodes.'); }
+    get offsetTop() { metrics.geometryReads++; return this._offsetTop; }
+    get scrollTop() { return this._scrollTop; }
+    set scrollTop(value) { metrics.scrollWrites++; this._scrollTop = value; }
+    append(...nodes) {
+      for (let node of nodes) {
+        if (typeof node === 'string') node = new Node('#text', node);
+        node.remove();
+        node.parentNode = this;
+        this.childNodes.push(node);
+      }
+    }
+    replaceChildren(...nodes) {
+      for (const node of this.childNodes) node.parentNode = null;
+      this.childNodes = [];
+      this._text = '';
+      this.append(...nodes);
+    }
+    remove() {
+      if (this.parentNode) this.parentNode.childNodes.splice(this.parentNode.childNodes.indexOf(this), 1);
+      this.parentNode = null;
+    }
+    contains(node) {
+      for (let current = node; current; current = current.parentNode) if (current === this) return true;
+      return false;
+    }
+    matches(selector) {
+      if (selector.startsWith('.')) return this.className.split(/\s+/u).includes(selector.slice(1));
+      if (selector.startsWith('#')) return this.id === selector.slice(1);
+      if (selector === '[data-command]') return this.dataset.command !== undefined;
+      if (selector === '[data-recall]') return this.dataset.recall !== undefined;
+      return this.tagName === selector.toUpperCase();
+    }
+    closest(selector) {
+      for (let node = this; node; node = node.parentNode) if (node.matches(selector)) return node;
+      return null;
+    }
+    querySelectorAll(selector) {
+      return this.children.flatMap(node => [node, ...node.querySelectorAll('*')]).filter(node => selector === '*' || node.matches(selector));
+    }
+    querySelector(selector) { return this.querySelectorAll(selector)[0] ?? null; }
+    setAttribute(name, value) { this.attributes.set(name, String(value)); }
+    getAttribute(name) { return this.attributes.get(name) ?? null; }
+    removeAttribute(name) { this.attributes.delete(name); }
+    addEventListener(type, callback) {
+      metrics.listeners++;
+      const callbacks = this.listeners.get(type) ?? [];
+      callbacks.push(callback);
+      this.listeners.set(type, callbacks);
+    }
+    focus(options) { document.activeElement = this; metrics.focusCalls.push({node: this, options}); }
+    setSelectionRange(start, end) { this.selectionStart = start; this.selectionEnd = end; }
+  }
+
+  const document = {
+    createElement: tag => new Node(tag),
+    createTextNode: text => new Node('#text', text),
+    getElementById: id => document.documentElement.querySelector(`#${id}`),
+    querySelector: selector => document.documentElement.querySelector(selector),
+    querySelectorAll: selector => document.documentElement.querySelectorAll(selector),
+  };
+  document.documentElement = new Node('html');
+  document.body = new Node('body');
+  document.documentElement.append(document.body);
+  document.activeElement = document.body;
+  const make = (tag, id, parent, className = '') => {
+    const node = new Node(tag);
+    node.id = id;
+    node.className = className;
+    parent.append(node);
+    return node;
+  };
+  const terminal = make('main', '', document.body, 'terminal');
+  const screen = make('div', 'screen', terminal, 'screen');
+  const output = make('div', 'output', screen);
+  const announcement = make('div', 'announcement', terminal);
+  const entry = make('section', '', terminal, 'entry');
+  const form = make('form', 'command-form', entry);
+  const prompt = make('label', 'prompt', form);
+  prompt.textContent = 'guest:~ $';
+  const input = make('input', 'command', form);
+  const runButton = make('button', '', form, 'run');
+  const suggestions = make('div', 'completions', entry, 'completions');
+  suggestions.hidden = true;
+  const toolbar = make('div', '', entry, 'toolbar');
+  const shortcuts = ['help', 'ls /', 'open /writing/sample'].map(command => {
+    const button = make('button', '', toolbar);
+    button.dataset.command = command;
+    return button;
+  });
+  for (const id of ['complete', 'previous', 'next']) make('button', id, toolbar);
+  make('button', 'read-output', entry);
+  const visualViewport = new Node('viewport');
+  visualViewport.height = height;
+  const window = new Node('window');
+  if (viewport) window.visualViewport = visualViewport;
+  const globals = {
+    document, window, visualViewport, innerWidth: width, console, __engine: model,
+    requestAnimationFrame(callback) {
+      const id = ++nextFrame;
+      metrics.framesScheduled++;
+      frames.set(id, callback);
+      return id;
+    },
+    cancelAnimationFrame: id => frames.delete(id),
+  };
+  const importLine = /^import \{([^}]+)\} from ['"]\.\/engine\.js['"];\s*/u;
+  if (!importLine.test(source)) throw new Error('Update harness for changed app import structure.');
+  // Only replace module linkage; execute the actual unmodified app body.
+  runInNewContext(source.replace(importLine, 'const {$1} = __engine;\n'), globals, {filename: new URL('app.js', root).pathname});
+
+  const dispatch = (target, type, init = {}) => {
+    const event = {type, target, defaultPrevented: false, preventDefault() { this.defaultPrevented = true; }, ...init};
+    const path = [];
+    for (let node = target; node; node = node.parentNode) path.push(node);
+    for (const node of path) for (const listener of node.listeners.get(type) ?? []) listener(event);
+    return event;
+  };
+  return {
+    document, terminal, screen, output, announcement, form, input, prompt, suggestions, runButton, shortcuts, metrics, globals,
+    dispatch,
+    click: target => dispatch(target, 'click'),
+    key: (key, init = {}, target = input) => dispatch(target, 'keydown', {key, ...init}),
+    submit(value) { input.value = value; return dispatch(form, 'submit'); },
+    change(value) { input.value = value; return dispatch(input, 'input'); },
+    flushFrame() {
+      const pending = [...frames.values()];
+      frames.clear();
+      for (const callback of pending) callback(0);
+    },
+    get pendingFrames() { return frames.size; },
+    resize(newWidth, newHeight) {
+      globals.innerWidth = newWidth;
+      visualViewport.height = newHeight;
+      dispatch(visualViewport, 'resize');
+      dispatch(window, 'resize');
+    },
+    resetMetrics() {
+      for (const key of ['geometryReads', 'scrollWrites', 'heightWrites', 'framesScheduled']) metrics[key] = 0;
+      metrics.focusCalls.length = 0;
+    },
+  };
+}

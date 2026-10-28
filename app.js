@@ -31,7 +31,7 @@ function hideSuggestions() {
 function commandButton(command, label = command) {
   const button = element('button', label, 'inline-command');
   button.type = 'button';
-  button.addEventListener('click', () => run(command, 'browse'));
+  button.dataset.command = command;
   return button;
 }
 
@@ -50,7 +50,7 @@ function renderResult(parent, result) {
     const list = element('dl', undefined, 'help-list');
     for (const [command, description] of [
       ['help', 'Show this guide'], ['ls [path]', 'List files and directories'],
-      ['open path', 'Read a file or browse a directory'], ['cd [path]', 'Change directory; cd alone returns home'],
+      ['open [path]', 'Read a file or browse a directory'], ['cd [path]', 'Change directory; cd alone returns home'],
       ['pwd', 'Show the current directory'], ['clear', 'Clear output; retain command history'], ['history', 'Recall recent commands']
     ]) list.append(element('dt', command), element('dd', description));
     parent.append(list, element('p', 'Tab completes. ↑ / ↓ recalls history. Escape cancels input. Browser shortcuts remain yours.', 'dim'));
@@ -77,7 +77,7 @@ function renderResult(parent, result) {
       const row = element('li');
       const button = element('button', command);
       button.type = 'button';
-      button.addEventListener('click', () => { input.value = command; hideSuggestions(); focusInput(); });
+      button.dataset.recall = command;
       row.append(element('span', String(index + 1).padStart(2, '0'), 'number'), button);
       list.append(row);
     }
@@ -99,12 +99,13 @@ function run(raw, mode = 'typed') {
   let block;
   if (result.kind === 'clear') {
     output.replaceChildren();
+    screen.scrollTop = 0;
   } else {
     block = element('section', undefined, 'block');
     block.tabIndex = -1;
     block.setAttribute('aria-label', result.kind === 'file' ? result.entry.title : 'Command result');
     const echo = element('div', undefined, 'echo');
-    echo.append(element('span', previousPrompt, 'path'), document.createTextNode(raw.slice(0, LIMITS.input)));
+    echo.append(element('span', previousPrompt, 'path'), document.createTextNode(result.invalidInput ? '[invalid input]' : raw));
     const body = element('div', undefined, 'result');
     renderResult(body, result);
     block.append(echo, body);
@@ -140,7 +141,7 @@ function complete() {
     for (const value of options) {
       const button = element('button', value.trimEnd());
       button.type = 'button';
-      button.addEventListener('click', () => { input.value = value; hideSuggestions(); focusInput(); });
+      button.dataset.recall = value;
       suggestions.append(button);
     }
     announce(`${options.length} completions available. Press Tab to reach the choices.`);
@@ -164,7 +165,24 @@ input.addEventListener('keydown', event => {
     hideSuggestions();
   }
 });
-for (const button of document.querySelectorAll('[data-command]')) button.addEventListener('click', () => run(button.dataset.command, 'browse'));
+// One handler serves static shortcuts and dynamic result/completion buttons.
+// Removed output carries no per-button listeners or captured session closures.
+terminal.addEventListener('click', event => {
+  const button = event.target.closest('button');
+  if (!button || !terminal.contains(button)) return;
+  if (button.dataset.command !== undefined) run(button.dataset.command, 'browse');
+  else if (button.dataset.recall !== undefined) {
+    input.value = button.dataset.recall;
+    hideSuggestions();
+    focusInput();
+  }
+});
+suggestions.addEventListener('keydown', event => {
+  if (event.key !== 'Escape' || event.isComposing || event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) return;
+  event.preventDefault();
+  hideSuggestions();
+  focusInput();
+});
 $('complete').addEventListener('click', () => { complete(); focusInput(); });
 $('previous').addEventListener('click', () => recall(-1));
 $('next').addEventListener('click', () => recall(1));
@@ -180,7 +198,8 @@ if (window.visualViewport) {
     pending = true;
     requestAnimationFrame(() => {
       pending = false;
-      terminal.style.height = innerWidth <= 600 ? `${Math.max(180, visualViewport.height - 16)}px` : '';
+      const height = innerWidth <= 600 ? `${Math.max(180, visualViewport.height - 16)}px` : '';
+      if (terminal.style.height !== height) terminal.style.height = height;
     });
   };
   visualViewport.addEventListener('resize', fit);
