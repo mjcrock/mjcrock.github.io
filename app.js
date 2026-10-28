@@ -1,5 +1,6 @@
-import {FILES, LIMITS, Session, completions, execute} from './engine.js';
+import {FILES, LIMITS, README_SOURCE, Session, completions, execute} from './engine.js';
 import {parseDocumentHash, documentHash, navigationState, navigationCwd} from './routing.js';
+import {markdownBlocks} from './markdown.js';
 
 const $ = id => document.getElementById(id);
 const output = $('output');
@@ -58,13 +59,25 @@ function commandButton(command, label = command) {
   return button;
 }
 
-function welcome() {
-  const wrap = element('div', undefined, 'welcome');
-  wrap.append(element('div', 'Interactive study / 01', 'session-mark'), element('h1', 'Interactive terminal'));
-  const hint = element('p', 'Start with ');
-  hint.append(commandButton('help'), ' or browse ', commandButton('ls /'), '.');
-  wrap.append(element('p', 'A small place to explore with commands.'), hint, element('p', 'Generic placeholders. No personal content.', 'dim'));
-  output.append(wrap);
+function renderMarkdown(parent, source) {
+  for (const block of markdownBlocks(source)) {
+    const node = element(block.tag);
+    for (const part of block.parts) {
+      if (part.href) {
+        const link = element('a', part.text, 'document-link');
+        link.href = part.href;
+        node.append(link);
+      } else node.append(document.createTextNode(part.text));
+    }
+    parent.append(node);
+  }
+}
+
+function initialDocument() {
+  const document = element('section', undefined, 'initial-document');
+  document.setAttribute('aria-label', 'README.md');
+  renderMarkdown(document, README_SOURCE);
+  output.append(document);
 }
 
 function renderResult(parent, result) {
@@ -77,12 +90,9 @@ function renderResult(parent, result) {
       ['cd [path]', 'Change directory; cd alone returns home'], ['pwd', 'Show the current directory'],
       ['clear', 'Clear output; retain history and document link'], ['history', 'Recall recent commands']
     ]) list.append(element('dt', command), element('dd', description));
-    parent.append(list,
-      element('p', 'Tab completes once; Tab again or Shift+Tab leaves the input. With choices open, ↑ / ↓ selects and Enter accepts without running. Escape dismisses choices and keeps your draft.', 'dim'),
-      element('p', 'Without choices, ↑ / ↓ recalls history. Browser shortcuts remain yours. No flags, pipes, or multiple files.', 'dim'),
-      element('p', 'Opened files have shareable links. Back / Forward restores documents, not typed command history. Directory browsing stays in the terminal.', 'dim'));
+    parent.append(list);
     const hint = element('p', 'Try ');
-    hint.append(commandButton('ls /writing'), ' then ', commandButton('cat /writing/sample'), '.');
+    hint.append(commandButton('cat README.md'), ' or ', commandButton('open README.md'), '.');
     parent.append(hint);
   } else if (result.kind === 'list') {
     const list = element('div', undefined, 'listing');
@@ -101,11 +111,9 @@ function renderResult(parent, result) {
     link.href = documentHash(result.path);
     path.append(' · ', link);
     parent.append(path, element('h2', result.entry.title, 'file-title'));
-    for (const [index, line] of result.entry.lines.entries()) {
-      parent.append(element('p', line || '\u00a0', index === 0 ? 'dim' : undefined));
-    }
+    renderMarkdown(parent, result.source);
   } else if (result.kind === 'cat') {
-    parent.append(element('pre', result.entry.lines.join('\n'), 'file-text'));
+    parent.append(element('pre', result.source, 'file-text'));
   } else if (result.kind === 'history') {
     const list = element('ol', undefined, 'history-list');
     for (const [index, command] of result.entries.entries()) {
@@ -135,7 +143,7 @@ function renderResult(parent, result) {
   } else if (result.kind === 'text') parent.append(element('p', result.message));
 }
 
-function showResult(result, prefix, raw, mode) {
+function showResult(result, prefix, raw, mode, showEcho = true) {
   let block;
   if (result.kind === 'clear') {
     output.replaceChildren();
@@ -148,7 +156,8 @@ function showResult(result, prefix, raw, mode) {
     echo.append(element('span', prefix, 'path'), document.createTextNode(result.invalidInput ? '[invalid input]' : raw));
     const body = element('div', undefined, 'result');
     renderResult(body, result);
-    block.append(echo, body);
+    if (showEcho) block.append(echo);
+    block.append(body);
     output.append(block);
     while (output.children.length > LIMITS.output) output.firstElementChild.remove();
     // Reveal synchronously: a later reader scroll must never be overwritten.
@@ -238,14 +247,13 @@ function complete() {
   const options = completions(input.value, session.cwd);
   hideSuggestions();
   completionAttempted = true;
-  completionPanel.hidden = false;
   if (options.length === 1) {
     const changed = options[0] !== input.value;
     input.value = options[0];
-    completionStatus.textContent = changed ? `Completed: ${options[0].trimEnd()}. Tab leaves the input.` : 'Already complete. Enter runs; Tab leaves the input.';
-    announce(completionStatus.textContent);
+    announce(changed ? `Completed: ${options[0].trimEnd()}. Tab leaves the input.` : 'Already complete. Enter runs; Tab leaves the input.');
     return changed;
   }
+  completionPanel.hidden = false;
   if (!options.length) {
     completionStatus.textContent = 'No matching completion. Keep typing, or use help. Tab leaves the input.';
     announce(completionStatus.textContent);
@@ -343,15 +351,15 @@ function navigate(initial = false) {
   completionAttempted = false;
   if (route.kind === 'home') {
     output.replaceChildren();
-    welcome();
+    initialDocument();
     screen.scrollTop = 0;
-    if (!initial) { screen.focus({preventScroll: true}); announce('Terminal start. Command history retained.'); }
+    if (!initial) { screen.focus({preventScroll: true}); announce('README.md. Command history retained.'); }
   } else {
     const result = route.kind === 'file' ? execute(`open ${route.path}`, cwd) : {
       kind: 'error', message: 'This document link is not available.',
       hint: 'Use ls / to browse the available files.', suggestions: ['ls /']
     };
-    showResult(result, 'view: ', route.path || '[unavailable document]', initial ? 'passive' : 'browse');
+    showResult(result, 'view: ', route.path || '[unavailable document]', initial ? 'passive' : 'browse', !initial);
   }
   rememberCurrentCwd();
 }

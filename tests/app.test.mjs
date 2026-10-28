@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
+import {readFile} from 'node:fs/promises';
 import {createApp} from './helpers/dom.mjs';
+
+const readme = await readFile(new URL('../README.md', import.meta.url), 'utf8');
 
 // These deterministic DOM-model tests do not replace real-browser QA.
 const ready = async options => {
@@ -11,21 +14,30 @@ const ready = async options => {
 };
 const button = (app, id) => app.document.getElementById(id);
 
-test('startup renders the welcome without autofocus or command execution', async () => {
+test('startup renders canonical README passively without fake commands, history, or autofocus', async () => {
   const app = await ready();
-  assert.match(app.output.textContent, /Interactive terminal/);
   assert.equal(app.output.children.length, 1);
+  assert.equal(app.output.querySelector('.echo'), null);
+  const profile = app.output.querySelectorAll('a').find(node => node.href === 'https://github.com/mjcrock');
+  assert.ok(profile);
+  assert.equal(profile.textContent, 'GitHub');
   assert.equal(app.document.activeElement, app.document.body);
   assert.equal(app.metrics.focusCalls.length, 0);
   assert.equal(app.suggestions.hidden, true);
+  assert.equal(app.shortcuts.length, 0);
+  app.change('draft');
+  app.key('ArrowUp');
+  assert.equal(app.input.value, 'draft');
+  app.submit('history');
+  assert.deepEqual(app.output.lastElementChild.querySelectorAll('button').map(node => node.textContent), ['history']);
 });
 
-test('typed submission prevents navigation, updates prompt, and returns focus to input', async () => {
+test('typed submission prevents navigation, retains the root prompt, and returns focus to input', async () => {
   const app = await ready();
-  assert.equal(app.submit('cd writing').defaultPrevented, true);
+  assert.equal(app.submit('cd /').defaultPrevented, true);
   assert.equal(app.input.value, '');
-  assert.equal(app.prompt.textContent, 'guest:~/writing $');
-  assert.match(app.output.lastElementChild.textContent, /guest:~ \$ cd writing/);
+  assert.equal(app.prompt.textContent, 'guest:~ $');
+  assert.match(app.output.lastElementChild.textContent, /guest:~ \$ cd \//);
   assert.equal(app.document.activeElement, app.input);
   assert.equal(app.metrics.focusCalls.at(-1).options.preventScroll, true);
   assert.equal(app.announcement.textContent, 'Command complete.');
@@ -42,32 +54,38 @@ test('empty submissions leave output and focus unchanged', async () => {
   assert.equal(app.metrics.focusCalls.length, 0);
 });
 
-test('delegated shortcut clicks on nested content focus the result, not the input', async () => {
+test('delegated listing clicks on nested content focus the document, not the input', async () => {
   const app = await ready();
+  app.submit('ls /');
+  app.resetMetrics();
+  const file = app.output.lastElementChild.querySelector('button');
   const nested = app.document.createElement('span');
-  app.shortcuts[2].append(nested);
+  file.append(nested);
   app.click(nested);
   const result = app.output.lastElementChild;
-  assert.equal(result.getAttribute('aria-label'), 'Sample document');
+  assert.equal(result.getAttribute('aria-label'), 'README.md');
   assert.equal(app.document.activeElement, result);
   assert.ok(app.metrics.focusCalls.every(call => call.node !== app.input));
-  assert.match(result.textContent, /Placeholder content only/);
-  assert.equal(app.announcement.textContent, 'Opened Sample document.');
-  assert.equal(app.location.hash, '#/writing/sample');
+  assert.match(result.textContent, /GitHub/);
+  assert.equal(app.announcement.textContent, 'Opened README.md.');
+  assert.equal(app.location.hash, '#/README.md');
 });
 
-test('dynamic listing and help buttons use the same delegated command handler', async () => {
+test('dynamic listing and help controls use the same delegated command handler', async () => {
   const app = await ready();
-  app.click(app.shortcuts[1]);
-  const listingButton = app.output.lastElementChild.querySelectorAll('button').find(node => node.dataset.command === 'open /writing');
+  app.submit('open /');
+  const listingButton = app.output.lastElementChild.querySelectorAll('button').find(node => node.dataset.command === 'open /README.md');
+  assert.ok(listingButton);
   app.click(listingButton);
-  assert.match(app.output.lastElementChild.textContent, /sample/);
-  app.click(app.output.lastElementChild.querySelector('button'));
-  assert.equal(app.location.hash, '#/writing/sample');
-  app.click(app.shortcuts[0]);
-  const helpButton = app.output.lastElementChild.querySelectorAll('button').find(node => node.dataset.command === 'cat /writing/sample');
+  assert.equal(app.location.hash, '#/README.md');
+  app.submit('help');
+  const commands = app.output.lastElementChild.querySelectorAll('button');
+  assert.ok(commands.length);
+  assert.ok(commands.every(node => !/writing|sample|about|contact|work/.test(node.dataset.command)));
+  const helpButton = commands.find(node => node.dataset.command === 'cat README.md');
+  assert.ok(helpButton);
   app.click(helpButton);
-  assert.match(app.output.lastElementChild.textContent, /Placeholder content only/);
+  assert.equal(app.output.lastElementChild.querySelector('pre').textContent, readme);
 });
 
 test('delegation ignores non-buttons, unrelated buttons, and foreign button targets', async () => {
@@ -100,7 +118,7 @@ test('arrow history and toolbar controls restore an unfinished draft', async () 
   const app = await ready();
   app.submit('pwd');
   app.submit('help');
-  app.change('open /w');
+  app.change('open /R');
   assert.equal(app.key('ArrowUp').defaultPrevented, true);
   assert.equal(app.input.value, 'help');
   assert.equal(app.input.selectionStart, 4);
@@ -110,25 +128,32 @@ test('arrow history and toolbar controls restore an unfinished draft', async () 
   app.click(button(app, 'next'));
   assert.equal(app.input.value, 'help');
   app.key('ArrowDown');
-  assert.equal(app.input.value, 'open /w');
+  assert.equal(app.input.value, 'open /R');
 });
 
-test('unique Tab completion is visible and the next Tab leaves natively', async () => {
+test('unique Tab completion fills input without opening a panel and announces the result', async () => {
   const app = await ready();
-  app.change('op');
-  assert.equal(app.key('Tab').defaultPrevented, true);
-  assert.equal(app.input.value, 'open ');
-  assert.equal(app.suggestions.hidden, true);
-  assert.equal(app.completionPanel.hidden, false);
-  assert.match(app.completionStatus.textContent, /Completed: open/);
-  assert.equal(app.input.getAttribute('aria-expanded'), 'false');
-  assert.equal(app.key('Tab').defaultPrevented, false);
-  assert.equal(app.input.value, 'open ');
-  assert.equal(app.completionPanel.hidden, true);
-  app.change('pwd');
-  assert.equal(app.key('Tab').defaultPrevented, false);
-  assert.equal(app.input.value, 'pwd');
-  assert.match(app.completionStatus.textContent, /Already complete/);
+  for (const [typed, completed] of [['op', 'open '], ['cat R', 'cat README.md']]) {
+    app.change(typed);
+    assert.equal(app.key('Tab').defaultPrevented, true);
+    assert.equal(app.input.value, completed);
+    assert.equal(app.suggestions.hidden, true);
+    assert.equal(app.completionPanel.hidden, true);
+    assert.equal(app.completionStatus.textContent, '');
+    assert.ok(app.announcement.textContent.startsWith(`Completed: ${completed.trimEnd()}.`));
+    assert.equal(app.input.getAttribute('aria-expanded'), 'false');
+    assert.equal(app.key('Tab').defaultPrevented, false);
+    assert.equal(app.input.value, completed);
+    assert.equal(app.completionPanel.hidden, true);
+  }
+  for (const command of ['pwd', 'cat README.md']) {
+    app.change(command);
+    assert.equal(app.key('Tab').defaultPrevented, false);
+    assert.equal(app.input.value, command);
+    assert.equal(app.completionPanel.hidden, true);
+    assert.equal(app.completionStatus.textContent, '');
+    assert.match(app.announcement.textContent, /Already complete/);
+  }
 });
 
 test('no-match completion is visible without trapping Tab or modifying the command', async () => {
@@ -468,23 +493,23 @@ test('clicking the prompt row focuses input but never steals text selection or o
 
 test('contextual error buttons fill safe recovery commands without running them', async () => {
   const app = await ready();
-  app.submit('cat /writing');
+  app.submit('cat /');
   const error = app.output.lastElementChild;
-  assert.match(error.textContent, /Is a directory: \/writing/);
-  const recovery = error.querySelectorAll('button').find(node => node.textContent === 'open /writing');
+  assert.match(error.textContent, /Is a directory: \//);
+  const recovery = error.querySelectorAll('button').find(node => node.textContent === 'open /');
   assert.ok(recovery);
   const nested = app.document.createElement('span');
   recovery.append(nested);
   const count = app.output.children.length;
   app.click(nested);
-  assert.equal(app.input.value, 'open /writing');
+  assert.equal(app.input.value, 'open /');
   assert.equal(app.output.children.length, count);
   assert.equal(app.document.activeElement, app.input);
   assert.equal(app.location.hash, '');
   app.submit(app.input.value);
-  assert.match(app.output.lastElementChild.textContent, /sample/);
+  assert.match(app.output.lastElementChild.textContent, /README\.md/);
   assert.equal(app.location.hash, '');
-  app.submit('opn /about');
+  app.submit('opn /README.md');
   const correction = app.output.lastElementChild.querySelectorAll('button').find(node => node.textContent === 'open');
   assert.ok(correction);
   const before = app.output.children.length;
@@ -494,17 +519,17 @@ test('contextual error buttons fill safe recovery commands without running them'
   assert.equal(app.location.hash, '');
 });
 
-test('cat emits raw file text without document chrome or URL navigation', async () => {
+test('cat emits the exact canonical Markdown including trailing newline without chrome or navigation', async () => {
   const app = await ready();
-  app.submit('open /about');
+  app.submit('open /README.md');
   const hash = app.location.hash;
   const entries = app.history.length;
-  app.submit('cat /writing/sample');
+  app.submit('cat README.md');
   const body = app.output.lastElementChild.querySelector('.result');
   assert.equal(body.children.length, 1);
   assert.equal(body.firstElementChild.tagName, 'PRE');
   assert.equal(body.firstElementChild.className, 'file-text');
-  assert.equal(body.firstElementChild.textContent, 'Placeholder content only.\nThis sample exists to test reading and navigation. It does not describe a person, project, or publication.');
+  assert.equal(body.firstElementChild.textContent, readme);
   assert.equal(body.querySelector('h2'), null);
   assert.equal(body.querySelector('a'), null);
   assert.equal(body.querySelector('.file-path'), null);
@@ -514,67 +539,66 @@ test('cat emits raw file text without document chrome or URL navigation', async 
 
 test('open creates a document link while directory and cat operations do not push routes', async () => {
   const app = await ready();
-  app.submit('open /about');
-  assert.equal(app.location.hash, '#/about');
+  app.submit('open /README.md');
+  assert.equal(app.location.hash, '#/README.md');
   assert.equal(app.history.length, 2);
-  const link = app.output.lastElementChild.querySelector('a');
-  assert.equal(link.href, '#/about');
-  assert.match(app.output.lastElementChild.querySelector('h2').textContent, /About/);
-  app.submit('open /about');
+  const link = app.output.lastElementChild.querySelector('.document-link');
+  assert.equal(link.href, '#/README.md');
+  assert.equal(app.output.lastElementChild.querySelector('.file-title').textContent, 'README.md');
+  app.submit('open README.md');
   assert.equal(app.history.length, 2, 'Same document must not add a duplicate URL entry');
-  for (const command of ['ls /', 'open /writing', 'cd /writing', 'cat sample']) {
+  for (const command of ['ls /', 'open /', 'cd /', 'cat README.md']) {
     app.submit(command);
     assert.equal(app.history.length, 2, command);
-    assert.equal(app.location.hash, '#/about', command);
+    assert.equal(app.location.hash, '#/README.md', command);
   }
 });
 
-test('Back and Forward restore document/cwd without running commands or dropping the draft', async () => {
+test('Back and Forward restore README without running commands or dropping the draft', async () => {
   const app = await ready();
-  app.submit('cd /writing');
-  app.submit('open sample');
-  app.submit('open /work/readme');
+  app.submit('open README.md');
   app.submit('cd /');
   app.change('unfinished command');
-  const count = app.output.children.length;
   app.history.back();
-  assert.equal(app.location.hash, '#/writing/sample');
-  assert.equal(app.prompt.textContent, 'guest:~/writing $');
-  assert.equal(app.input.value, 'unfinished command');
-  assert.equal(app.output.children.length, count + 1, 'Paired popstate/hashchange must render once');
-  assert.equal(app.output.lastElementChild.querySelector('.file-title').textContent, 'Sample document');
-  app.history.forward();
-  assert.equal(app.location.hash, '#/work/readme');
+  assert.equal(app.location.hash, '');
   assert.equal(app.prompt.textContent, 'guest:~ $');
   assert.equal(app.input.value, 'unfinished command');
-  assert.equal(app.output.children.length, count + 2);
-  assert.equal(app.output.lastElementChild.querySelector('.file-title').textContent, 'Work');
+  assert.equal(app.output.children.length, 1, 'Home restores the passive README once');
+  assert.equal(app.output.querySelector('.echo'), null);
+  app.history.forward();
+  assert.equal(app.location.hash, '#/README.md');
+  assert.equal(app.prompt.textContent, 'guest:~ $');
+  assert.equal(app.input.value, 'unfinished command');
+  assert.equal(app.output.children.length, 2, 'Paired popstate/hashchange must render once');
+  assert.equal(app.output.lastElementChild.querySelector('.file-title').textContent, 'README.md');
   app.submit('history');
   const commands = app.output.lastElementChild.querySelectorAll('button').map(node => node.textContent);
-  assert.deepEqual(commands, ['cd /writing', 'open sample', 'open /work/readme', 'cd /', 'history']);
+  assert.deepEqual(commands, ['open README.md', 'cd /', 'history']);
 });
 
-test('Back to the initial entry restores welcome without clearing command history', async () => {
+test('Back to the initial entry restores passive README without clearing command history', async () => {
   const app = await ready();
-  app.submit('open /about');
+  app.submit('open /README.md');
   app.change('draft');
   app.history.back();
   assert.equal(app.location.hash, '');
   assert.equal(app.output.children.length, 1);
-  assert.match(app.output.textContent, /Interactive terminal/);
+  assert.equal(app.output.querySelector('.echo'), null);
+  assert.match(app.output.textContent, /GitHub/);
   assert.equal(app.input.value, 'draft');
   assert.equal(app.document.activeElement, app.screen);
   app.history.forward();
-  assert.equal(app.output.lastElementChild.querySelector('.file-title').textContent, 'About');
+  assert.equal(app.output.lastElementChild.querySelector('.file-title').textContent, 'README.md');
   app.submit('history');
-  assert.deepEqual(app.output.lastElementChild.querySelectorAll('button').map(node => node.textContent), ['open /about', 'history']);
+  assert.deepEqual(app.output.lastElementChild.querySelectorAll('button').map(node => node.textContent), ['open /README.md', 'history']);
 });
 
-test('fresh document links load passively at root without recording an open command', async () => {
-  const app = await ready({hash: '#/writing/sample'});
+test('fresh README links load passively without fake command echoes or command history', async () => {
+  const app = await ready({hash: '#/README.md'});
   assert.equal(app.document.activeElement, app.document.body);
   assert.equal(app.prompt.textContent, 'guest:~ $');
-  assert.equal(app.output.lastElementChild.querySelector('.file-title').textContent, 'Sample document');
+  assert.equal(app.output.querySelector('.echo'), null);
+  assert.equal(app.output.lastElementChild.querySelector('.file-title').textContent, 'README.md');
   assert.equal(app.history.length, 1);
   app.change('draft');
   app.key('ArrowUp');
@@ -597,57 +621,56 @@ test('malformed and unknown initial hashes are safely rejected without autofocus
 });
 
 test('forged history data cannot restore an invalid cwd or execute embedded commands', async () => {
-  const app = await ready({hash: '#/about', state: {terminal: {path: '/about', cwd: '__proto__', command: 'clear', raw: 'cat /contact'}}});
+  const app = await ready({hash: '#/README.md', state: {terminal: {path: '/README.md', cwd: '__proto__', command: 'clear', raw: 'cat /contact'}}});
   assert.equal(app.prompt.textContent, 'guest:~ $');
-  assert.equal(app.output.lastElementChild.querySelector('.file-title').textContent, 'About');
-  assert.deepEqual(app.history.state, {terminal: {path: '/about', cwd: '/'}});
+  assert.equal(app.output.lastElementChild.querySelector('.file-title').textContent, 'README.md');
+  assert.deepEqual(app.history.state, {terminal: {path: '/README.md', cwd: '/'}});
   app.submit('history');
   assert.deepEqual(app.output.lastElementChild.querySelectorAll('button').map(node => node.textContent), ['history']);
 });
 
-test('manual hash navigation deduplicates paired events and uses only the allowed resource', async () => {
+test('manual hash navigation deduplicates paired events and uses only README.md', async () => {
   const app = await ready();
-  app.submit('cd /writing');
+  app.submit('cd /');
   const count = app.output.children.length;
-  app.navigateHash('#/contact');
+  app.navigateHash('#/README.md');
   assert.equal(app.prompt.textContent, 'guest:~ $');
   assert.equal(app.output.children.length, count + 1);
-  assert.equal(app.output.lastElementChild.querySelector('.file-title').textContent, 'Contact');
+  assert.equal(app.output.lastElementChild.querySelector('.file-title').textContent, 'README.md');
   app.navigateHash('#clear');
   assert.match(app.output.lastElementChild.textContent, /document link is not available/);
   app.submit('history');
-  assert.deepEqual(app.output.lastElementChild.querySelectorAll('button').map(node => node.textContent), ['cd /writing', 'history']);
+  assert.deepEqual(app.output.lastElementChild.querySelectorAll('button').map(node => node.textContent), ['cd /', 'history']);
 });
 
 test('repeated browser navigation remains output-bounded and adds no per-result listeners', async () => {
   const app = await ready();
-  app.submit('open /about');
-  app.submit('open /contact');
+  app.submit('open README.md');
+  app.navigateHash('#not-a-document');
   const listeners = app.metrics.listeners;
   for (let index = 0; index < 100; index++) { app.history.back(); app.history.forward(); }
   assert.equal(app.output.children.length, 40);
   assert.equal(app.metrics.listeners, listeners);
   assert.equal(app.history.length, 3);
   app.submit('history');
-  assert.deepEqual(app.output.lastElementChild.querySelectorAll('button').map(node => node.textContent), ['open /about', 'open /contact', 'history']);
+  assert.deepEqual(app.output.lastElementChild.querySelectorAll('button').map(node => node.textContent), ['open README.md', 'history']);
 });
 
 test('history API write failure cannot prevent document rendering or further commands', async () => {
   const app = await ready();
   app.history.failWrites = true;
-  app.submit('open /about');
+  app.submit('open /README.md');
   assert.equal(app.location.hash, '');
-  assert.equal(app.output.lastElementChild.querySelector('.file-title').textContent, 'About');
+  assert.equal(app.output.lastElementChild.querySelector('.file-title').textContent, 'README.md');
   assert.match(app.announcement.textContent, /could not update the document link/);
   app.submit('pwd');
   assert.equal(app.output.lastElementChild.querySelector('.result').textContent, '/');
 });
 
-
 test('browser navigation invalidates visible completion state without deleting its draft', async () => {
   const app = await ready();
-  app.submit('open /about');
-  app.submit('open /contact');
+  app.submit('open /README.md');
+  app.navigateHash('#not-a-document');
   app.change('h');
   app.key('Tab');
   assert.equal(app.input.getAttribute('aria-expanded'), 'true');
@@ -657,9 +680,8 @@ test('browser navigation invalidates visible completion state without deleting i
   assert.equal(app.suggestions.children.length, 0);
   assert.equal(app.input.getAttribute('aria-expanded'), 'false');
   assert.equal(app.input.getAttribute('aria-activedescendant'), null);
-  assert.equal(app.location.hash, '#/about');
+  assert.equal(app.location.hash, '#/README.md');
 });
-
 
 test('compact mode follows the visual viewport without changing the draft or reader position', async () => {
   const app = await ready({width: 390, height: 650});
@@ -675,4 +697,43 @@ test('compact mode follows the visual viewport without changing the draft or rea
   }
   assert.equal(app.metrics.scrollWrites, 0);
   assert.equal(app.metrics.geometryReads, 0);
+});
+
+
+test('README and command controls are ready synchronously without network or timer APIs', async () => {
+  // createApp awaits local test fixture imports, not application initialization.
+  const app = await createApp();
+  assert.match(app.output.textContent, /GitHub/);
+  assert.equal(app.output.children.length, 1);
+  assert.equal(app.output.querySelector('.loading'), null);
+  assert.equal(app.output.querySelector('.error'), null);
+  assert.equal(app.output.querySelector('.echo'), null);
+  assert.ok(app.document.querySelectorAll('input, button').every(control => !control.disabled));
+  assert.equal(app.document.querySelector('.site-name').textContent, 'Michael J. Crockett');
+  assert.equal(app.document.querySelector('.site-status').textContent, 'Site in progress');
+  assert.equal(app.document.getElementById('keyboard-help').textContent, 'Type help for commands.');
+  for (const api of ['fetch', 'XMLHttpRequest', 'WebSocket', 'setTimeout', 'clearTimeout']) {
+    assert.equal(api in app.globals, false, `${api} is not supplied by the fixture`);
+  }
+  assert.equal(app.document.activeElement, app.document.body);
+  assert.equal(app.metrics.focusCalls.length, 0);
+  app.submit('cat README.md');
+  assert.equal(app.output.lastElementChild.querySelector('pre').textContent, readme);
+});
+
+test('help retains commands and short examples without the three explanatory paragraphs', async () => {
+  const app = await ready();
+  app.submit('help');
+  const result = app.output.lastElementChild.querySelector('.result');
+  assert.deepEqual(result.querySelectorAll('p').map(node => node.textContent), [
+    'A small, read-only interface. Not a remote shell.',
+    'Try cat README.md or open README.md.',
+  ]);
+  assert.equal(result.querySelectorAll('dt').length, 8);
+  assert.deepEqual(result.querySelectorAll('button').map(node => node.dataset.command), ['cat README.md', 'open README.md']);
+  for (const removed of [
+    'Tab completes once; Tab again or Shift+Tab leaves the input. With choices open, ↑ / ↓ selects and Enter accepts without running. Escape dismisses choices and keeps your draft.',
+    'Without choices, ↑ / ↓ recalls history. Browser shortcuts remain yours. No flags, pipes, or multiple files.',
+    'README.md is the site’s real Markdown file. cat prints its source; open formats it. Document links and Back / Forward never replay typed commands.',
+  ]) assert.equal(result.textContent.includes(removed), false);
 });

@@ -9,19 +9,20 @@ const html = read('index.html');
 const app = read('app.js');
 const engine = read('engine.js');
 const routing = read('routing.js');
+const markdown = read('markdown.js');
 const css = read('style.css');
 
 test('all runtime resources are local and exist; legacy stylesheet is removed', () => {
   for (const [, path] of html.matchAll(/(?:src|href)="([^"]+)"/g)) {
     if (path.startsWith('data:image/svg+xml,')) continue;
-    assert.match(path, /^[a-z][a-z.-]+$/);
+    assert.match(path, /^[A-Za-z][A-Za-z.-]+$/);
     assert.ok(existsSync(new URL(path, root)), path);
   }
   assert.ok(!existsSync(new URL('assets/styles.css', root)));
   assert.ok(!/assets\/styles\.css/.test(html));
 });
 
-test('CSP precedes resources and does not allow inline/eval or outbound connections', () => {
+test('CSP allows only same-origin loading and no inline/eval execution', () => {
   const policy = html.match(/http-equiv="Content-Security-Policy" content="([^"]+)"/)[1];
   const directives = new Map(policy.split(';').map(part => {
     const [name, ...values] = part.trim().split(/\s+/);
@@ -36,10 +37,11 @@ test('CSP precedes resources and does not allow inline/eval or outbound connecti
   assert.match(html, /name="referrer" content="no-referrer"/);
 });
 
-test('rendering has no HTML execution, storage, or network APIs', () => {
-  const source = app + engine + routing;
+test('rendering has no HTML execution, storage, or runtime fetch', () => {
+  const source = app + engine + routing + markdown;
   assert.doesNotMatch(source, /\.innerHTML|\.outerHTML|insertAdjacentHTML|document\.write|\beval\s*\(|new Function\b/);
-  assert.doesNotMatch(source, /\bfetch\s*\(|XMLHttpRequest|WebSocket|sendBeacon|localStorage|sessionStorage|document\.cookie/);
+  assert.doesNotMatch(source, /XMLHttpRequest|WebSocket|sendBeacon|localStorage|sessionStorage|document\.cookie/);
+  assert.doesNotMatch(source, /\bfetch\s*\(|AbortController|setTimeout|readMarkdown/);
   assert.match(app, /textContent/);
   assert.match(app, /createTextNode/);
 });
@@ -83,7 +85,7 @@ test('focus pseudo-classes remain valid after stylesheet formatting', () => {
 
 
 test('runtime module imports resolve to local files, including the bounded router', () => {
-  for (const source of [app, engine, routing]) {
+  for (const source of [app, engine, routing, markdown]) {
     for (const [, path] of source.matchAll(/from ['"]([^'"]+)['"]/g)) {
       assert.match(path, /^\.\/[a-z-]+\.js$/);
       assert.ok(existsSync(new URL(path, root)), path);
@@ -91,4 +93,26 @@ test('runtime module imports resolve to local files, including the bounded route
   }
   assert.match(html, /role="combobox"[^>]*aria-autocomplete="list"/);
   assert.match(html, /id="completion-panel"[^>]*hidden/);
+});
+
+
+test('approved identity, one short hint, and real canonical README replace placeholders', () => {
+  assert.match(html, /<h1 class="site-name">Michael J\. Crockett<\/h1>/);
+  assert.match(html, /<p class="site-status">Site in progress<\/p>/);
+  assert.match(html, /id="keyboard-help">Type <button[^>]+>help<\/button> for commands\.<\/p>/);
+  assert.doesNotMatch(html, /<footer|class="mode"|data-command="ls \/"|data-command="open \/writing\/sample"/);
+  assert.doesNotMatch(app + html, /Interactive study|Interactive terminal|Generic placeholders|content placeholders/);
+  assert.equal(read('README.md'), '[GitHub](https://github.com/mjcrock)\n');
+  assert.ok(existsSync(new URL('DEVELOPMENT.md', root)));
+  assert.ok(!existsSync(new URL('.DS_Store', root)));
+});
+
+
+test('completion overlay is outside layout flow and anchored above the entry', () => {
+  assert.match(css, /\.entry\s*\{\s*position: relative;/);
+  const panel = css.match(/\.completion-panel\s*\{([^}]+)\}/)[1];
+  assert.match(panel, /position: absolute;/);
+  assert.match(panel, /bottom: 100%;/);
+  assert.match(panel, /max-height: 180px;/);
+  assert.match(panel, /overflow-y: auto;/);
 });

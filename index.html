@@ -6,17 +6,17 @@
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
   <meta name="referrer" content="no-referrer">
   <meta name="robots" content="noindex,nofollow">
-  <meta name="description" content="A draft terminal interaction prototype with placeholder content.">
-  <title>guest / terminal study</title>
+  <meta name="description" content="Michael J. Crockett's personal website.">
+  <title>Michael J. Crockett</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%232c2533'/%3E%3Cpath d='m17 20 12 12-12 12m18 0h13' fill='none' stroke='%239dc9e8' stroke-width='5'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="style.css">
   <script type="module" src="app.js"></script>
 </head>
 <body>
-  <main class="terminal" aria-label="Generic terminal prototype">
+  <main class="terminal" aria-label="Michael J. Crockett’s website">
     <header class="bar">
-      <span class="brand">guest<span class="slash"> / </span><span class="label">personal terminal</span></span>
-      <span class="mode">prototype</span>
+      <h1 class="site-name">Michael J. Crockett</h1>
+      <p class="site-status">Site in progress</p>
     </header>
     <div class="screen" id="screen" role="region" tabindex="0" aria-label="Terminal output, scroll to review previous commands">
       <div id="output"></div>
@@ -33,11 +33,7 @@
         <div id="completions" class="completions" role="listbox" hidden aria-label="Completion choices"></div>
       </div>
       <div class="toolbar">
-        <div class="shortcuts" role="group" aria-label="Suggested commands">
-          <button type="button" data-command="help">help</button>
-          <button type="button" data-command="ls /">ls /</button>
-          <button type="button" data-command="open /writing/sample">sample</button>
-        </div>
+        <p class="prompt-hint" id="keyboard-help">Type <button type="button" data-command="help" class="inline-command">help</button> for commands.</p>
         <div class="keys">
           <button type="button" id="complete" aria-label="Complete command or path" title="Complete command or path">⇥<span> complete</span></button>
           <button type="button" id="previous" aria-label="Previous command" title="Previous command">↑</button>
@@ -46,11 +42,7 @@
       </div>
       <button type="button" id="read-output" class="sr-only focus-show">Read command output</button>
     </section>
-    <footer class="status">
-      <span id="keyboard-help">Tab completes · Tab again leaves · Esc dismisses</span>
-      <span class="status-note">content placeholders</span>
-    </footer>
   </main>
-  <noscript>This prototype needs JavaScript for its command interface. No external scripts or services are required.</noscript>
+  <noscript>JavaScript is needed for the command interface. You can also read the <a href="README.md">README.md</a> directly.</noscript>
 </body>
 </html>

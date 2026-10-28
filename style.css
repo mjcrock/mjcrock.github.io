@@ -62,33 +62,15 @@ button {
 }
 
 .bar {
-  height: 58px;
+  height: 96px;
   flex: none;
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 5px;
   border-bottom: 1px solid var(--line);
   padding: 0 28px;
-  font-size: .86rem;
-}
-
-.brand {
-  color: var(--ink);
-  letter-spacing: .02em;
-}
-
-.label,.slash {
-  color: var(--muted);
-}
-
-.mode {
-  color: var(--muted);
-  font-size: .7rem;
-  letter-spacing: .09em;
-  text-transform: uppercase;
-  border: 1px solid var(--softline);
-  padding: 5px 8px;
 }
 
 .screen {
@@ -101,25 +83,6 @@ button {
   scrollbar-color: var(--line) transparent;
 }
 
-.welcome {
-  margin: 0 0 28px;
-}
-
-.welcome h1 {
-  font: inherit;
-  font-size: clamp(1.1rem,2.2vw,1.45rem);
-  font-weight: 500;
-  letter-spacing: -.03em;
-  margin: 0 0 19px;
-}
-
-.welcome p {
-  margin: 7px 0;
-  color: var(--muted);
-  font-size: .9rem;
-  line-height: 1.7;
-}
-
 .inline-command {
   border: 0;
   border-bottom: 1px dotted var(--line);
@@ -128,14 +91,6 @@ button {
   color: var(--blue);
   font: inherit;
   text-align: left;
-}
-
-.session-mark {
-  color: var(--muted);
-  font-size: .72rem;
-  letter-spacing: .1em;
-  margin-bottom: 22px;
-  text-transform: uppercase;
 }
 
 .block {
@@ -228,6 +183,7 @@ button {
 }
 
 .entry {
+  position: relative;
   flex: none;
   border-top: 1px solid var(--softline);
   padding: 14px 28px 8px;
@@ -292,7 +248,7 @@ form {
   margin-top: 8px;
 }
 
-.shortcuts,.keys {
+.keys {
   display: flex;
   align-items: center;
   gap: 4px;
@@ -315,22 +271,6 @@ form {
 
 .keys button {
   min-width: 36px;
-}
-
-.status {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 15px;
-  padding: 12px 28px;
-  border-top: 1px solid var(--softline);
-  color: var(--muted);
-  font-size: .65rem;
-  letter-spacing: .01em;
-}
-
-.status-note {
-  white-space: nowrap;
 }
 
 .completions {
@@ -403,21 +343,14 @@ noscript {
     box-shadow: none;
   }
   .bar {
-    height: 50px;
+    height: 84px;
     padding: 0 16px;
     font-size: .76rem;
-  }
-  .mode {
-    font-size: .6rem;
-    padding: 4px 5px;
   }
   .screen {
     padding: 24px 16px 14px;
   }
-  .welcome h1 {
-    font-size: 1.08rem;
-  }
-  .welcome p,.block {
+  .block {
     font-size: .9rem;
   }
   .entry {
@@ -446,16 +379,6 @@ noscript {
   .keys span {
     display: none;
   }
-  .shortcuts {
-    gap: 0;
-  }
-  .status {
-    padding: 10px 16px;
-    font-size: .58rem;
-  }
-  .status-note {
-    display: none;
-  }
   .listing-row {
     grid-template-columns: 94px 1fr;
     gap: 10px;
@@ -464,15 +387,9 @@ noscript {
     grid-template-columns: 80px 1fr;
     gap: 6px 10px;
   }
-  .bar .label {
-    font-size: .7rem;
-  }
   .run {
     width: 44px;
     height: 44px;
-  }
-  .welcome {
-    margin-bottom: 20px;
   }
   .block {
     margin-bottom: 22px;
@@ -483,9 +400,6 @@ noscript {
 }
 
 @media(max-width:350px) {
-  .bar .label,.bar .slash {
-    display: none;
-  }
   .toolbar button {
     padding: 5px;
   }
@@ -549,13 +463,27 @@ noscript {
   }
 }
 
+/* Overlay the output; completion must never move the prompt or touch controls. */
 .completion-panel {
-  position: relative;
+  position: absolute;
+  z-index: 1;
+  bottom: 100%;
+  left: 12px;
+  right: 12px;
   max-height: 180px;
+  padding: 4px 10px;
+  border: 1px solid var(--line);
+  background: var(--surface);
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-width: thin;
   scrollbar-color: var(--line) transparent;
+}
+
+@media(max-height:420px) and (min-width:601px) {
+  .completion-panel {
+    max-height: 120px;
+  }
 }
 
 .completion-panel[hidden] {
@@ -601,14 +529,11 @@ noscript {
     min-height: 260px;
   }
   .bar {
-    height: 36px;
+    height: 64px;
   }
   .screen {
     padding-top: 12px;
     padding-bottom: 10px;
-  }
-  .status {
-    display: none;
   }
   .completion-panel {
     max-height: 84px;
@@ -627,14 +552,11 @@ noscript {
   min-height: 260px;
 }
 .terminal.compact .bar {
-  height: 36px;
+  height: 64px;
 }
 .terminal.compact .screen {
   padding-top: 12px;
   padding-bottom: 10px;
-}
-.terminal.compact .status {
-  display: none;
 }
 .terminal.compact .completion-panel {
   max-height: 84px;
@@ -645,4 +567,54 @@ noscript {
 }
 .terminal.compact .completions {
   padding-bottom: 4px;
+}
+
+.site-name {
+  margin: 0;
+  color: var(--ink);
+  font: inherit;
+  font-size: clamp(1.3rem, 3vw, 1.8rem);
+  font-weight: 500;
+  line-height: 1.2;
+  letter-spacing: -.025em;
+}
+
+.site-status {
+  margin: 0;
+  color: var(--muted);
+  font-size: .75rem;
+  line-height: 1.4;
+}
+
+.prompt-hint {
+  margin: 0;
+  color: var(--muted);
+  font-size: .7rem;
+  line-height: 1.5;
+}
+
+.initial-document {
+  font-size: .95rem;
+  line-height: 1.7;
+}
+
+.initial-document p {
+  margin: 0;
+}
+
+.terminal.compact .site-name {
+  font-size: 1.2rem;
+}
+
+.terminal.compact .site-status {
+  font-size: .7rem;
+}
+
+/* The inline hint is text, not another full-size toolbar key. */
+.toolbar .prompt-hint .inline-command {
+  min-height: 0;
+  min-width: 0;
+  padding: 0;
+  font: inherit;
+  border-radius: 0;
 }

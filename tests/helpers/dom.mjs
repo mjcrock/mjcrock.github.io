@@ -10,6 +10,8 @@ import {pathToFileURL} from 'node:url';
 export async function createApp({root = new URL('../../', import.meta.url), width = 1000, height = 800, viewport = true, hash = '', state = null} = {}) {
   if (typeof root === 'string') root = pathToFileURL(root.endsWith('/') ? root : `${root}/`);
   const source = await readFile(new URL('app.js', root), 'utf8');
+  const markup = await readFile(new URL('index.html', root), 'utf8');
+  const staticTags = [...markup.matchAll(/<[^>]+>/gu)].map(match => match[0]);
   const importLine = /^import \{([^}]+)\} from ['"]\.\/([\w-]+)\.js['"];\s*/gmu;
   const modules = {};
   for (const [, , name] of source.matchAll(importLine)) {
@@ -42,6 +44,7 @@ export async function createApp({root = new URL('../../', import.meta.url), widt
         },
       };
       this.hidden = false;
+      this.disabled = false;
       this.value = '';
       this._text = text;
       this._scrollTop = 0;
@@ -105,6 +108,7 @@ export async function createApp({root = new URL('../../', import.meta.url), widt
       return null;
     }
     querySelectorAll(selector) {
+      if (selector.includes(',')) return [...new Set(selector.split(',').flatMap(part => this.querySelectorAll(part.trim())))];
       return this.children.flatMap(node => [node, ...node.querySelectorAll('*')]).filter(node => selector === '*' || node.matches(selector));
     }
     querySelector(selector) { return this.querySelectorAll(selector)[0] ?? null; }
@@ -147,10 +151,19 @@ export async function createApp({root = new URL('../../', import.meta.url), widt
     const node = new Node(tag);
     node.id = id;
     node.className = className;
+    const staticTag = staticTags.find(value => id ? value.includes(`id="${id}"`) : className && value.includes(`class="${className}"`));
+    node.disabled = Boolean(staticTag && /\sdisabled(?:\s|>|=)/u.test(staticTag));
     parent.append(node);
     return node;
   };
   const terminal = make('main', '', document.body, 'terminal');
+  if (markup.includes('class="site-name"')) {
+    const header = make('header', '', terminal, 'bar');
+    for (const [tag, className] of [['h1', 'site-name'], ['p', 'site-status']]) {
+      const text = markup.match(new RegExp(`<${tag} class="${className}">([^<]+)</${tag}>`, 'u'))?.[1];
+      make(tag, '', header, className).textContent = text ?? '';
+    }
+  }
   const screen = make('div', 'screen', terminal, 'screen');
   const output = make('div', 'output', screen);
   const announcement = make('div', 'announcement', terminal);
@@ -170,11 +183,24 @@ export async function createApp({root = new URL('../../', import.meta.url), widt
   input.setAttribute('aria-expanded', 'false');
   input.setAttribute('aria-controls', 'completions');
   const toolbar = make('div', '', entry, 'toolbar');
-  const shortcuts = ['help', 'ls /', 'open /writing/sample'].map(command => {
+  const shortcutsMarkup = markup.match(/<div class="shortcuts"[^>]*>([\s\S]*?)<\/div>/u)?.[1] ?? '';
+  const shortcuts = [...shortcutsMarkup.matchAll(/<button[^>]+data-command="([^"]+)"[^>]*>/gu)].map(([, command]) => {
     const button = make('button', '', toolbar);
     button.dataset.command = command;
     return button;
   });
+  const hintMarkup = markup.match(/<p[^>]*id="keyboard-help"[^>]*>([\s\S]*?)<\/p>/u)?.[1];
+  if (hintMarkup) {
+    const parts = hintMarkup.match(/^([\s\S]*?)<button([^>]+)>([^<]*)<\/button>([\s\S]*)$/u);
+    if (!parts) throw new Error('Update fixture for the changed keyboard hint markup.');
+    const [, before, attributes, label, after] = parts;
+    const hint = make('p', 'keyboard-help', toolbar, 'prompt-hint');
+    hint.append(before);
+    const help = make('button', '', hint, 'inline-command');
+    help.dataset.command = attributes.match(/data-command="([^"]+)"/u)?.[1];
+    help.textContent = label;
+    hint.append(after);
+  }
   for (const id of ['complete', 'previous', 'next']) make('button', id, toolbar);
   make('button', 'read-output', entry);
   const visualViewport = new Node('viewport');
@@ -248,7 +274,8 @@ export async function createApp({root = new URL('../../', import.meta.url), widt
     cancelAnimationFrame: id => frames.delete(id),
   };
   // Only replace module linkage; execute the actual unmodified app body.
-  runInNewContext(source.replace(importLine, (_, names, name) => `const {${names}} = __modules.${name};\n`), globals, {filename: new URL('app.js', root).pathname});
+  const executable = source.replace(importLine, (_, names, name) => `const {${names}} = __modules.${name};\n`);
+  runInNewContext(executable, globals, {filename: new URL('app.js', root).pathname});
 
   function dispatch(target, type, init = {}) {
     const event = {type, target, button: 0, defaultPrevented: false, preventDefault() { this.defaultPrevented = true; }, ...init};

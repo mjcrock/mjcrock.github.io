@@ -1,14 +1,13 @@
 // Pure command model. This is a fixed, read-only virtual filesystem, never a shell.
+// BEGIN GENERATED README — run node scripts/update-readme.mjs; do not edit here.
+export const README_SOURCE = "[GitHub](https://github.com/mjcrock)\n";
+// END GENERATED README
+
 export const LIMITS = Object.freeze({input: 500, history: 50, output: 40});
 export const COMMANDS = Object.freeze(['help', 'ls', 'open', 'cat', 'cd', 'pwd', 'clear', 'history']);
 export const FILES = Object.freeze({
-  '/': {type: 'directory', description: 'Home'},
-  '/about': {type: 'file', title: 'About', lines: ['Generic placeholder.', 'No personal information has been added.']},
-  '/work': {type: 'directory', description: 'Work · placeholder'},
-  '/work/readme': {type: 'file', title: 'Work', lines: ['Generic placeholder.', 'No projects have been added.']},
-  '/writing': {type: 'directory', description: 'Writing · placeholder'},
-  '/writing/sample': {type: 'file', title: 'Sample document', lines: ['Placeholder content only.', 'This sample exists to test reading and navigation. It does not describe a person, project, or publication.']},
-  '/contact': {type: 'file', title: 'Contact', lines: ['Generic placeholder.', 'No contact details or form have been added.']}
+  '/': Object.freeze({type: 'directory', description: 'Home'}),
+  '/README.md': Object.freeze({type: 'file', title: 'README.md'})
 });
 
 const PATH_COMMANDS = Object.freeze(['ls', 'open', 'cat', 'cd']);
@@ -31,12 +30,6 @@ function oneEditApart(value, candidate) {
     if (candidate.length >= value.length) right++;
   }
   return edits + (left < value.length || right < candidate.length ? 1 : 0) <= 1;
-}
-
-const parentPath = path => path.slice(0, path.lastIndexOf('/')) || '/';
-function nearestDirectory(path) {
-  while (!own(path) || FILES[path].type !== 'directory') path = parentPath(path);
-  return path;
 }
 
 export function resolvePath(raw = '.', cwd = '/') {
@@ -83,7 +76,7 @@ export function execute(line, cwd = '/', history = []) {
   if (command === 'pwd') return {...result, kind: 'text', message: cwd};
   const path = resolvePath(args[0] || (command === 'cd' ? '/' : '.'), cwd);
   if (!own(path)) {
-    const browse = `ls ${nearestDirectory(path)}`;
+    const browse = 'ls /';
     return error(cwd, `Not found: ${args[0] || path}`, `Use ${browse} to see available paths.`, [browse]);
   }
   const entry = FILES[path];
@@ -95,7 +88,7 @@ export function execute(line, cwd = '/', history = []) {
   }
   if (entry.type === 'directory') return {...result, kind: 'list', path, entries: list(path)};
   if (command === 'ls') return {...result, kind: 'list', path: cwd, entries: [path]};
-  return {...result, kind: command === 'cat' ? 'cat' : 'file', path, entry};
+  return {...result, kind: command === 'cat' ? 'cat' : 'file', path, entry, source: README_SOURCE};
 }
 
 export function completions(value, cwd = '/') {
@@ -107,7 +100,6 @@ export function completions(value, cwd = '/') {
   const slash = prefix.lastIndexOf('/');
   const base = slash < 0 ? '' : prefix.slice(0, slash + 1);
   const token = prefix.slice(slash + 1);
-  // cat keeps directory candidates so users can complete a file path one segment at a time.
   return list(resolvePath(base || '.', cwd)).filter(path => {
     const name = path.slice(path.lastIndexOf('/') + 1);
     return name.startsWith(token) && (command !== 'cd' || FILES[path].type === 'directory');
