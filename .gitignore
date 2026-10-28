@@ -1,0 +1,4 @@
+# macOS Finder and archive metadata
+.DS_Store
+._*
+__MACOSX/
