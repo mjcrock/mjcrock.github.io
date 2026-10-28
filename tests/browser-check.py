@@ -67,6 +67,12 @@ def main():
             assert command.input_value() == 'open sample'
             command.press('Enter')
             assert page.locator('.file-title').last.inner_text() == 'Sample document'
+            previous_url = page.url
+            run('cat /writing/sample')
+            block = page.locator('.block').last
+            assert block.locator('pre.file-text').inner_text() == 'Placeholder content only.\nThis sample exists to test reading and navigation. It does not describe a person, project, or publication.'
+            assert block.locator('h2, a').count() == 0
+            assert page.url == previous_url
             command.fill('h')
             command.press('Tab')
             page.locator('#completions button').first.focus()
@@ -80,11 +86,11 @@ def main():
             assert command.evaluate('(node) => node === document.activeElement')
             command.fill('unfinished')
             command.press('ArrowUp')
-            assert command.input_value() == 'open sample'
+            assert command.input_value() == 'cat /writing/sample'
             command.press('ArrowDown')
             assert command.input_value() == 'unfinished'
             command.press('Escape')
-            assert command.input_value() == ''
+            assert command.input_value() == 'unfinished'
             checks.append('typed/browse focus, navigation, completion, Escape, history draft')
 
             run('<img src=x onerror=alert(1)>')
@@ -108,11 +114,29 @@ def main():
             assert page.locator('.history-list li').count() == 50
             checks.append('literal hostile text, rejected bidi echo, 40 output and 50 history bounds')
 
-            for width, height in [(320, 568), (390, 844), (1280, 900), (1024, 400)]:
+            run('open /about')
+            command.fill('draft')
+            page.go_back()
+            page.wait_for_function("location.hash === '#/writing/sample'")
+            assert command.input_value() == 'draft'
+            assert page.locator('.file-title').last.inner_text() == 'Sample document'
+            page.go_forward()
+            page.wait_for_function("location.hash === '#/about'")
+            assert page.locator('.file-title').last.inner_text() == 'About'
+            checks.append('cat exact plain text/no navigation, document Back/Forward with draft retained')
+
+            for width, height in [(320, 300), (320, 568), (390, 844), (1280, 900), (1024, 400)]:
                 page.set_viewport_size({'width': width, 'height': height})
                 page.wait_for_timeout(50)
                 assert page.evaluate('document.documentElement.scrollWidth <= innerWidth'), (width, 'horizontal overflow')
                 assert command.is_visible()
+                if width == 320 and height == 300:
+                    command.fill('')
+                    page.locator('#complete').click()
+                    assert page.locator('.toolbar').evaluate('(node) => node.getBoundingClientRect().bottom <= document.querySelector(".terminal").getBoundingClientRect().bottom')
+                    command.press('ArrowUp')
+                    assert page.locator('[role=option][aria-selected=true]').evaluate('(node) => { const r=node.getBoundingClientRect(), p=document.querySelector("#completion-panel").getBoundingClientRect(); return r.top>=p.top && r.bottom<=p.bottom; }')
+                    command.press('Escape')
                 if args.screenshots:
                     args.screenshots.mkdir(parents=True, exist_ok=True)
                     page.screenshot(path=str(args.screenshots / f'{width}x{height}.png'), full_page=True)

@@ -7,10 +7,15 @@ import {pathToFileURL} from 'node:url';
  * It models the APIs the app uses and counts writes/reads. Real rendering,
  * focus defaults, accessibility trees, CSP, and mobile keyboards need browser QA.
  */
-export async function createApp({root = new URL('../../', import.meta.url), width = 1000, height = 800, viewport = true} = {}) {
+export async function createApp({root = new URL('../../', import.meta.url), width = 1000, height = 800, viewport = true, hash = '', state = null} = {}) {
   if (typeof root === 'string') root = pathToFileURL(root.endsWith('/') ? root : `${root}/`);
-  const model = await import(new URL('engine.js', root).href);
   const source = await readFile(new URL('app.js', root), 'utf8');
+  const importLine = /^import \{([^}]+)\} from ['"]\.\/([\w-]+)\.js['"];\s*/gmu;
+  const modules = {};
+  for (const [, , name] of source.matchAll(importLine)) {
+    modules[name] = await import(new URL(`${name}.js`, root).href);
+  }
+  if (!modules.engine) throw new Error('Update harness for changed app import structure.');
   const metrics = {listeners: 0, geometryReads: 0, scrollWrites: 0, heightWrites: 0, framesScheduled: 0, focusCalls: []};
   const frames = new Map();
   let nextFrame = 0;
@@ -26,6 +31,16 @@ export async function createApp({root = new URL('../../', import.meta.url), widt
       this.attributes = new Map();
       this.listeners = new Map();
       this.className = '';
+      this.classList = {
+        contains: name => this.className.split(/\s+/u).includes(name),
+        add: (...names) => { this.className = [...new Set([...this.className.split(/\s+/u).filter(Boolean), ...names])].join(' '); },
+        remove: (...names) => { this.className = this.className.split(/\s+/u).filter(name => !names.includes(name)).join(' '); },
+        toggle: (name, force) => {
+          const add = force ?? !this.classList.contains(name);
+          if (add) this.classList.add(name); else this.classList.remove(name);
+          return add;
+        },
+      };
       this.hidden = false;
       this.value = '';
       this._text = text;
@@ -79,8 +94,10 @@ export async function createApp({root = new URL('../../', import.meta.url), widt
     matches(selector) {
       if (selector.startsWith('.')) return this.className.split(/\s+/u).includes(selector.slice(1));
       if (selector.startsWith('#')) return this.id === selector.slice(1);
-      if (selector === '[data-command]') return this.dataset.command !== undefined;
-      if (selector === '[data-recall]') return this.dataset.recall !== undefined;
+      const attribute = selector.match(/^\[([\w-]+)(?:=['"]?([^'"]+)['"]?)?\]$/u);
+      if (attribute) return attribute[2] === undefined
+        ? this.getAttribute(attribute[1]) !== null
+        : this.getAttribute(attribute[1]) === attribute[2];
       return this.tagName === selector.toUpperCase();
     }
     closest(selector) {
@@ -91,8 +108,15 @@ export async function createApp({root = new URL('../../', import.meta.url), widt
       return this.children.flatMap(node => [node, ...node.querySelectorAll('*')]).filter(node => selector === '*' || node.matches(selector));
     }
     querySelector(selector) { return this.querySelectorAll(selector)[0] ?? null; }
-    setAttribute(name, value) { this.attributes.set(name, String(value)); }
-    getAttribute(name) { return this.attributes.get(name) ?? null; }
+    setAttribute(name, value) {
+      this.attributes.set(name, String(value));
+      if (name === 'id') this.id = String(value);
+      if (name === 'tabindex') this.tabIndex = Number(value);
+    }
+    getAttribute(name) {
+      if (name.startsWith('data-')) return this.dataset[name.slice(5).replace(/-([a-z])/g, (_, letter) => letter.toUpperCase())] ?? null;
+      return this.attributes.get(name) ?? null;
+    }
     removeAttribute(name) { this.attributes.delete(name); }
     addEventListener(type, callback) {
       metrics.listeners++;
@@ -104,7 +128,11 @@ export async function createApp({root = new URL('../../', import.meta.url), widt
     setSelectionRange(start, end) { this.selectionStart = start; this.selectionEnd = end; }
   }
 
+  let selectedText = '';
+  const selection = {get isCollapsed() { return selectedText.length === 0; }, toString: () => selectedText};
   const document = {
+    title: 'guest / terminal study',
+    getSelection: () => selection,
     createElement: tag => new Node(tag),
     createTextNode: text => new Node('#text', text),
     getElementById: id => document.documentElement.querySelector(`#${id}`),
@@ -128,12 +156,19 @@ export async function createApp({root = new URL('../../', import.meta.url), widt
   const announcement = make('div', 'announcement', terminal);
   const entry = make('section', '', terminal, 'entry');
   const form = make('form', 'command-form', entry);
-  const prompt = make('label', 'prompt', form);
+  const prompt = make('span', 'prompt', form);
   prompt.textContent = 'guest:~ $';
   const input = make('input', 'command', form);
   const runButton = make('button', '', form, 'run');
-  const suggestions = make('div', 'completions', entry, 'completions');
+  const completionPanel = make('div', 'completion-panel', entry, 'completion-panel');
+  completionPanel.hidden = true;
+  const completionStatus = make('p', 'completion-status', completionPanel, 'completion-status');
+  const suggestions = make('div', 'completions', completionPanel, 'completions');
   suggestions.hidden = true;
+  suggestions.setAttribute('role', 'listbox');
+  input.setAttribute('role', 'combobox');
+  input.setAttribute('aria-expanded', 'false');
+  input.setAttribute('aria-controls', 'completions');
   const toolbar = make('div', '', entry, 'toolbar');
   const shortcuts = ['help', 'ls /', 'open /writing/sample'].map(command => {
     const button = make('button', '', toolbar);
@@ -146,8 +181,64 @@ export async function createApp({root = new URL('../../', import.meta.url), widt
   visualViewport.height = height;
   const window = new Node('window');
   if (viewport) window.visualViewport = visualViewport;
+  window.getSelection = () => selection;
+  let currentURL = new URL(`https://terminal.test/${hash}`);
+  const entries = [{url: currentURL.href, state: structuredClone(state)}];
+  let historyIndex = 0;
+  const location = {
+    get href() { return currentURL.href; },
+    get hash() { return currentURL.hash; },
+    set hash(value) { navigateHash(value); },
+    get pathname() { return currentURL.pathname; },
+    get search() { return currentURL.search; },
+    get origin() { return currentURL.origin; },
+  };
+  const history = {
+    get state() { return entries[historyIndex].state; },
+    get length() { return entries.length; },
+    get index() { return historyIndex; },
+    entries,
+    failWrites: false,
+    pushState(nextState, _title, url) {
+      if (this.failWrites) throw new Error('History writes unavailable');
+      const next = new URL(url ?? currentURL.href, currentURL);
+      if (next.origin !== currentURL.origin) throw new Error('Cross-origin history write');
+      entries.splice(historyIndex + 1);
+      entries.push({url: next.href, state: structuredClone(nextState)});
+      historyIndex++;
+      currentURL = next;
+    },
+    replaceState(nextState, _title, url) {
+      if (this.failWrites) throw new Error('History writes unavailable');
+      const next = new URL(url ?? currentURL.href, currentURL);
+      if (next.origin !== currentURL.origin) throw new Error('Cross-origin history write');
+      entries[historyIndex] = {url: next.href, state: structuredClone(nextState)};
+      currentURL = next;
+    },
+    go(delta) {
+      const nextIndex = Math.max(0, Math.min(entries.length - 1, historyIndex + delta));
+      if (nextIndex === historyIndex) return;
+      const oldHash = currentURL.hash;
+      historyIndex = nextIndex;
+      currentURL = new URL(entries[historyIndex].url);
+      dispatch(window, 'popstate', {state: history.state});
+      if (currentURL.hash !== oldHash) dispatch(window, 'hashchange');
+    },
+    back() { this.go(-1); },
+    forward() { this.go(1); },
+  };
+  function navigateHash(value, nextState = null) {
+    const next = new URL(currentURL);
+    next.hash = value;
+    if (next.href === currentURL.href) return;
+    history.pushState(nextState, '', next.href);
+    dispatch(window, 'popstate', {state: history.state});
+    dispatch(window, 'hashchange');
+  }
+  window.location = location;
+  window.history = history;
   const globals = {
-    document, window, visualViewport, innerWidth: width, console, __engine: model,
+    document, window, location, history, visualViewport, innerWidth: width, console, __modules: modules,
     requestAnimationFrame(callback) {
       const id = ++nextFrame;
       metrics.framesScheduled++;
@@ -156,20 +247,20 @@ export async function createApp({root = new URL('../../', import.meta.url), widt
     },
     cancelAnimationFrame: id => frames.delete(id),
   };
-  const importLine = /^import \{([^}]+)\} from ['"]\.\/engine\.js['"];\s*/u;
-  if (!importLine.test(source)) throw new Error('Update harness for changed app import structure.');
   // Only replace module linkage; execute the actual unmodified app body.
-  runInNewContext(source.replace(importLine, 'const {$1} = __engine;\n'), globals, {filename: new URL('app.js', root).pathname});
+  runInNewContext(source.replace(importLine, (_, names, name) => `const {${names}} = __modules.${name};\n`), globals, {filename: new URL('app.js', root).pathname});
 
-  const dispatch = (target, type, init = {}) => {
-    const event = {type, target, defaultPrevented: false, preventDefault() { this.defaultPrevented = true; }, ...init};
+  function dispatch(target, type, init = {}) {
+    const event = {type, target, button: 0, defaultPrevented: false, preventDefault() { this.defaultPrevented = true; }, ...init};
     const path = [];
     for (let node = target; node; node = node.parentNode) path.push(node);
     for (const node of path) for (const listener of node.listeners.get(type) ?? []) listener(event);
     return event;
-  };
+  }
   return {
-    document, terminal, screen, output, announcement, form, input, prompt, suggestions, runButton, shortcuts, metrics, globals,
+    document, terminal, screen, output, announcement, form, input, prompt, suggestions, completionPanel, completionStatus, runButton, shortcuts, metrics, globals, location, history, window,
+    navigateHash,
+    selectText(value) { selectedText = value; },
     dispatch,
     click: target => dispatch(target, 'click'),
     key: (key, init = {}, target = input) => dispatch(target, 'keydown', {key, ...init}),

@@ -39,7 +39,7 @@ button {
   cursor: pointer;
 }
 
-button:focus-visible,input:focus-visible,.screen:focus-visible {
+button:focus-visible,a:focus-visible,input:focus-visible,.screen:focus-visible {
   outline: 2px solid var(--focus);
   outline-offset: 3px;
 }
@@ -261,7 +261,12 @@ input {
 }
 
 form:focus-within {
-  box-shadow: 0 1px 0 var(--line);
+  outline: 1px solid var(--focus);
+  outline-offset: 3px;
+}
+
+form {
+  cursor: text;
 }
 
 .run {
@@ -542,4 +547,102 @@ noscript {
     min-height: 140px;
     max-height: 55vh;
   }
+}
+
+.completion-panel {
+  position: relative;
+  max-height: 180px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line) transparent;
+}
+
+.completion-panel[hidden] {
+  display: none;
+}
+
+.completion-status {
+  margin: 8px 0 6px;
+  color: var(--muted);
+  font-size: .75rem;
+  line-height: 1.6;
+}
+
+.completions button[aria-selected="true"] {
+  color: var(--ink);
+  border-color: var(--focus);
+  outline: 1px solid var(--focus);
+}
+
+.document-link {
+  color: var(--blue);
+  text-underline-offset: 3px;
+}
+
+.recovery {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px 12px;
+  margin-top: 8px;
+}
+
+.file-text {
+  margin: 3px 0;
+  font: inherit;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* Keep the input and actions usable when a mobile keyboard leaves little height. */
+@media(max-height:420px) and (max-width:600px) {
+  .terminal {
+    min-height: 260px;
+  }
+  .bar {
+    height: 36px;
+  }
+  .screen {
+    padding-top: 12px;
+    padding-bottom: 10px;
+  }
+  .status {
+    display: none;
+  }
+  .completion-panel {
+    max-height: 84px;
+  }
+  .completion-status {
+    margin-top: 4px;
+    font-size: .7rem;
+  }
+  .completions {
+    padding-bottom: 4px;
+  }
+}
+
+/* Some keyboards shrink only visualViewport; fit() applies this same compact mode. */
+.terminal.compact {
+  min-height: 260px;
+}
+.terminal.compact .bar {
+  height: 36px;
+}
+.terminal.compact .screen {
+  padding-top: 12px;
+  padding-bottom: 10px;
+}
+.terminal.compact .status {
+  display: none;
+}
+.terminal.compact .completion-panel {
+  max-height: 84px;
+}
+.terminal.compact .completion-status {
+  margin-top: 4px;
+  font-size: .7rem;
+}
+.terminal.compact .completions {
+  padding-bottom: 4px;
 }

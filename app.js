@@ -1,4 +1,5 @@
-import {FILES, LIMITS, Session, completions} from './engine.js';
+import {FILES, LIMITS, Session, completions, execute} from './engine.js';
+import {parseDocumentHash, documentHash, navigationState, navigationCwd} from './routing.js';
 
 const $ = id => document.getElementById(id);
 const output = $('output');
@@ -7,9 +8,16 @@ const form = $('command-form');
 const input = $('command');
 const prompt = $('prompt');
 const suggestions = $('completions');
+const completionPanel = $('completion-panel');
+const completionStatus = $('completion-status');
 const announcement = $('announcement');
 const terminal = document.querySelector('.terminal');
 const session = new Session();
+let choices = [];
+let selectedChoice = -1;
+let completionAttempted = false;
+let lastNavigation = '';
+let composing = false;
 
 function element(tag, text, className) {
   const node = document.createElement(tag);
@@ -21,11 +29,26 @@ function element(tag, text, className) {
 const displayPath = () => session.cwd === '/' ? '~' : '~' + session.cwd;
 const focusInput = () => input.focus({preventScroll: true});
 const announce = message => { announcement.textContent = message; };
+const modified = event => event.isComposing || event.ctrlKey || event.metaKey || event.altKey || event.shiftKey;
+const updatePrompt = () => { prompt.textContent = `guest:${displayPath()} $`; };
 
 function hideSuggestions() {
+  completionPanel.hidden = true;
   suggestions.hidden = true;
   suggestions.replaceChildren();
-  input.removeAttribute('aria-controls');
+  completionStatus.textContent = '';
+  choices = [];
+  selectedChoice = -1;
+  input.setAttribute('aria-expanded', 'false');
+  input.removeAttribute('aria-activedescendant');
+}
+
+function fillCommand(value) {
+  input.value = value;
+  completionAttempted = false;
+  hideSuggestions();
+  focusInput();
+  input.setSelectionRange(value.length, value.length);
 }
 
 function commandButton(command, label = command) {
@@ -50,12 +73,16 @@ function renderResult(parent, result) {
     const list = element('dl', undefined, 'help-list');
     for (const [command, description] of [
       ['help', 'Show this guide'], ['ls [path]', 'List files and directories'],
-      ['open [path]', 'Read a file or browse a directory'], ['cd [path]', 'Change directory; cd alone returns home'],
-      ['pwd', 'Show the current directory'], ['clear', 'Clear output; retain command history'], ['history', 'Recall recent commands']
+      ['open [path]', 'Read a file or browse a directory'], ['cat path', 'Print one file as plain text; no reader or navigation'],
+      ['cd [path]', 'Change directory; cd alone returns home'], ['pwd', 'Show the current directory'],
+      ['clear', 'Clear output; retain history and document link'], ['history', 'Recall recent commands']
     ]) list.append(element('dt', command), element('dd', description));
-    parent.append(list, element('p', 'Tab completes. ↑ / ↓ recalls history. Escape cancels input. Browser shortcuts remain yours.', 'dim'));
+    parent.append(list,
+      element('p', 'Tab completes once; Tab again or Shift+Tab leaves the input. With choices open, ↑ / ↓ selects and Enter accepts without running. Escape dismisses choices and keeps your draft.', 'dim'),
+      element('p', 'Without choices, ↑ / ↓ recalls history. Browser shortcuts remain yours. No flags, pipes, or multiple files.', 'dim'),
+      element('p', 'Opened files have shareable links. Back / Forward restores documents, not typed command history. Directory browsing stays in the terminal.', 'dim'));
     const hint = element('p', 'Try ');
-    hint.append(commandButton('ls /writing'), ' then ', commandButton('open /writing/sample'), '.');
+    hint.append(commandButton('ls /writing'), ' then ', commandButton('cat /writing/sample'), '.');
     parent.append(hint);
   } else if (result.kind === 'list') {
     const list = element('div', undefined, 'listing');
@@ -69,8 +96,16 @@ function renderResult(parent, result) {
     if (!result.entries.length) list.append(element('p', 'This directory is empty.', 'dim'));
     parent.append(list);
   } else if (result.kind === 'file') {
-    parent.append(element('div', result.path, 'file-path'), element('h2', result.entry.title, 'file-title'));
-    for (const [index, line] of result.entry.lines.entries()) parent.append(element('p', line || '\u00a0', index === 0 ? 'dim' : undefined));
+    const path = element('div', result.path, 'file-path');
+    const link = element('a', 'Link to this document', 'document-link');
+    link.href = documentHash(result.path);
+    path.append(' · ', link);
+    parent.append(path, element('h2', result.entry.title, 'file-title'));
+    for (const [index, line] of result.entry.lines.entries()) {
+      parent.append(element('p', line || '\u00a0', index === 0 ? 'dim' : undefined));
+    }
+  } else if (result.kind === 'cat') {
+    parent.append(element('pre', result.entry.lines.join('\n'), 'file-text'));
   } else if (result.kind === 'history') {
     const list = element('ol', undefined, 'history-list');
     for (const [index, command] of result.entries.entries()) {
@@ -84,18 +119,23 @@ function renderResult(parent, result) {
     parent.append(list);
   } else if (result.kind === 'error') {
     parent.append(element('p', result.message, 'error'), element('p', result.hint, 'dim'));
+    if (result.suggestions?.length) {
+      const recovery = element('div', undefined, 'recovery');
+      recovery.append(element('span', 'Fill input: ', 'dim'));
+      for (const command of result.suggestions) {
+        const button = element('button', command, 'inline-command');
+        button.type = 'button';
+        button.dataset.recall = command;
+        recovery.append(button);
+      }
+      parent.append(recovery);
+    }
   } else if (result.kind === 'location') {
     parent.append(element('p', `Now in ${displayPath()}`, 'dim'));
   } else if (result.kind === 'text') parent.append(element('p', result.message));
 }
 
-function run(raw, mode = 'typed') {
-  if (typeof raw !== 'string' || !raw.trim()) return;
-  hideSuggestions();
-  const previousPrompt = `guest:${displayPath()} $ `;
-  const result = session.submit(raw);
-  input.value = '';
-  prompt.textContent = `guest:${displayPath()} $`;
+function showResult(result, prefix, raw, mode) {
   let block;
   if (result.kind === 'clear') {
     output.replaceChildren();
@@ -105,92 +145,221 @@ function run(raw, mode = 'typed') {
     block.tabIndex = -1;
     block.setAttribute('aria-label', result.kind === 'file' ? result.entry.title : 'Command result');
     const echo = element('div', undefined, 'echo');
-    echo.append(element('span', previousPrompt, 'path'), document.createTextNode(result.invalidInput ? '[invalid input]' : raw));
+    echo.append(element('span', prefix, 'path'), document.createTextNode(result.invalidInput ? '[invalid input]' : raw));
     const body = element('div', undefined, 'result');
     renderResult(body, result);
     block.append(echo, body);
     output.append(block);
     while (output.children.length > LIMITS.output) output.firstElementChild.remove();
-    // Start at a long result's beginning instead of dropping the reader at its end.
+    // Reveal synchronously: a later reader scroll must never be overwritten.
     screen.scrollTop = Math.max(0, block.offsetTop - screen.offsetTop - 12);
   }
   if (mode === 'typed') focusInput();
-  else if (block) block.focus({preventScroll: true}); // No keyboard on a touch reading action.
-  announce(result.kind === 'error' ? result.message : result.kind === 'file' ? `Opened ${result.entry.title}.` : result.kind === 'clear' ? 'Output cleared.' : 'Command complete.');
+  else if (mode === 'browse' && block) block.focus({preventScroll: true});
+  announce(result.kind === 'error' ? result.message : result.kind === 'file'
+    ? `Opened ${result.entry.title}.` : result.kind === 'clear' ? 'Output cleared.' : 'Command complete.');
+}
+
+function routeSignature(route, cwd) {
+  return `${route.kind}:${route.path || ''}:${cwd}`;
+}
+
+function writeNavigation(method, path, hash = window.location.hash) {
+  try {
+    window.history[method](navigationState(path, session.cwd), '', hash || window.location.pathname + window.location.search);
+    lastNavigation = routeSignature(parseDocumentHash(window.location.hash), session.cwd);
+    return true;
+  } catch {
+    // Restricted/overloaded history APIs must not break reading or commands.
+    return false;
+  }
+}
+
+function rememberCurrentCwd() {
+  const route = parseDocumentHash(window.location.hash);
+  const saved = window.history.state?.terminal;
+  if (saved?.path === route.path && saved.cwd === session.cwd) return true;
+  return writeNavigation('replaceState', route.path);
+}
+
+function rememberDocument(path) {
+  rememberCurrentCwd();
+  const hash = documentHash(path);
+  return window.location.hash === hash
+    ? rememberCurrentCwd()
+    : writeNavigation('pushState', path, hash);
+}
+
+function run(raw, mode = 'typed') {
+  if (typeof raw !== 'string' || !raw.trim()) return;
+  hideSuggestions();
+  completionAttempted = false;
+  const prefix = `guest:${displayPath()} $ `;
+  const result = session.submit(raw);
+  input.value = '';
+  updatePrompt();
+  showResult(result, prefix, raw, mode);
+  const linked = result.kind === 'file' ? rememberDocument(result.path) : rememberCurrentCwd();
+  if (!linked) announce('Command complete. This browser could not update the document link.');
 }
 
 function recall(delta) {
-  input.value = session.recall(delta, input.value);
-  hideSuggestions();
-  focusInput();
-  input.setSelectionRange(input.value.length, input.value.length);
+  fillCommand(session.recall(delta, input.value));
+}
+
+function selectChoice(index) {
+  if (!choices.length) return;
+  if (selectedChoice >= 0) suggestions.children[selectedChoice].setAttribute('aria-selected', 'false');
+  selectedChoice = (index + choices.length) % choices.length;
+  const option = suggestions.children[selectedChoice];
+  option.setAttribute('aria-selected', 'true');
+  input.setAttribute('aria-activedescendant', option.id);
+  // Keep keyboard selection inside the short-viewport panel, not the page.
+  if (completionPanel.scrollHeight > completionPanel.clientHeight) {
+    const top = option.offsetTop;
+    const bottom = top + option.offsetHeight;
+    if (top < completionPanel.scrollTop) completionPanel.scrollTop = top;
+    else if (bottom > completionPanel.scrollTop + completionPanel.clientHeight) {
+      completionPanel.scrollTop = bottom - completionPanel.clientHeight;
+    }
+  }
+  announce(`${choices[selectedChoice].trimEnd()}, ${selectedChoice + 1} of ${choices.length}. Enter accepts; Tab leaves.`);
+}
+
+function acceptChoice(index = selectedChoice) {
+  const value = choices[index];
+  if (value === undefined) return;
+  fillCommand(value);
+  completionAttempted = true;
+  announce(`Completed: ${value}. Press Enter to run or keep typing.`);
 }
 
 function complete() {
   const options = completions(input.value, session.cwd);
-  if (options.length === 1 && options[0] === input.value) return false;
   hideSuggestions();
+  completionAttempted = true;
+  completionPanel.hidden = false;
   if (options.length === 1) {
+    const changed = options[0] !== input.value;
     input.value = options[0];
-    announce(`Completed: ${options[0]}`);
-    return true;
+    completionStatus.textContent = changed ? `Completed: ${options[0].trimEnd()}. Tab leaves the input.` : 'Already complete. Enter runs; Tab leaves the input.';
+    announce(completionStatus.textContent);
+    return changed;
   }
-  if (options.length > 1) {
-    suggestions.hidden = false;
-    input.setAttribute('aria-controls', 'completions');
-    for (const value of options) {
-      const button = element('button', value.trimEnd());
-      button.type = 'button';
-      button.dataset.recall = value;
-      suggestions.append(button);
-    }
-    announce(`${options.length} completions available. Press Tab to reach the choices.`);
-    return true;
+  if (!options.length) {
+    completionStatus.textContent = 'No matching completion. Keep typing, or use help. Tab leaves the input.';
+    announce(completionStatus.textContent);
+    return false;
   }
-  announce('No matching completion.');
-  return false;
+  choices = options;
+  suggestions.hidden = false;
+  input.setAttribute('aria-expanded', 'true');
+  completionStatus.textContent = `${options.length} choices · ↑ ↓ select · Enter accepts · Tab leaves · Esc dismisses`;
+  for (const [index, value] of options.entries()) {
+    const button = element('button', value.trimEnd());
+    button.type = 'button';
+    button.id = `completion-${index}`;
+    button.tabIndex = -1;
+    button.setAttribute('role', 'option');
+    button.setAttribute('aria-selected', 'false');
+    button.dataset.completion = String(index);
+    suggestions.append(button);
+  }
+  selectChoice(0);
+  return true;
 }
 
-form.addEventListener('submit', event => { event.preventDefault(); run(input.value); });
-input.addEventListener('input', hideSuggestions);
+form.addEventListener('submit', event => {
+  event.preventDefault();
+  if (!composing) run(input.value);
+});
+form.addEventListener('click', event => {
+  if (event.target !== form && event.target !== prompt) return;
+  if (window.getSelection()?.isCollapsed === false) {
+    event.preventDefault(); // Do not turn a completed text selection into an input-focus action.
+    return;
+  }
+  focusInput();
+});
+input.addEventListener('input', () => { completionAttempted = false; hideSuggestions(); });
+input.addEventListener('compositionstart', () => { composing = true; });
+input.addEventListener('compositionend', () => { composing = false; });
 input.addEventListener('keydown', event => {
   if (event.isComposing || event.ctrlKey || event.metaKey || event.altKey) return;
-  if (event.key === 'Tab' && !event.shiftKey && input.value.trim()) {
-    if (suggestions.hidden && complete()) event.preventDefault();
+  if (event.shiftKey) {
+    if (event.key === 'Tab') hideSuggestions();
+    return;
+  }
+  if (event.key === 'Tab') {
+    if (input.value.trim() && !completionAttempted) {
+      if (complete()) event.preventDefault();
+    } else hideSuggestions();
   } else if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
     event.preventDefault();
-    recall(event.key === 'ArrowUp' ? -1 : 1);
-  } else if (event.key === 'Escape') {
-    input.value = '';
+    const delta = event.key === 'ArrowUp' ? -1 : 1;
+    if (choices.length) selectChoice(selectedChoice + delta);
+    else recall(delta);
+  } else if (event.key === 'Enter' && choices.length) {
+    event.preventDefault();
+    acceptChoice();
+  } else if (event.key === 'Escape' && !completionPanel.hidden) {
+    event.preventDefault();
     hideSuggestions();
   }
 });
-// One handler serves static shortcuts and dynamic result/completion buttons.
-// Removed output carries no per-button listeners or captured session closures.
+// One handler owns static shortcuts, dynamic results, and fill-only recovery.
 terminal.addEventListener('click', event => {
   const button = event.target.closest('button');
   if (!button || !terminal.contains(button)) return;
   if (button.dataset.command !== undefined) run(button.dataset.command, 'browse');
   else if (button.dataset.recall !== undefined) {
-    input.value = button.dataset.recall;
-    hideSuggestions();
-    focusInput();
-  }
+    fillCommand(button.dataset.recall);
+    announce(`Ready: ${input.value}. Press Enter to run.`);
+  } else if (button.dataset.completion !== undefined) acceptChoice(Number(button.dataset.completion));
 });
 suggestions.addEventListener('keydown', event => {
-  if (event.key !== 'Escape' || event.isComposing || event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) return;
-  event.preventDefault();
-  hideSuggestions();
-  focusInput();
+  if (modified(event)) return;
+  if (event.key === 'Escape') { event.preventDefault(); hideSuggestions(); focusInput(); }
+  else if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
+    event.preventDefault();
+    selectChoice(selectedChoice + (event.key === 'ArrowUp' ? -1 : 1));
+    focusInput();
+  }
 });
 $('complete').addEventListener('click', () => { complete(); focusInput(); });
 $('previous').addEventListener('click', () => recall(-1));
 $('next').addEventListener('click', () => recall(1));
 $('read-output').addEventListener('click', () => screen.focus({preventScroll: true}));
-welcome();
 
-// No initial autofocus. Opening the site should never summon a software keyboard.
-// Resize preserves the reader's position; it never jumps output to the bottom.
+function navigate(initial = false) {
+  const route = parseDocumentHash(window.location.hash);
+  const cwd = navigationCwd(window.history.state, route.path);
+  const signature = routeSignature(route, cwd);
+  if (!initial && signature === lastNavigation) return;
+  lastNavigation = signature;
+  session.cwd = cwd;
+  updatePrompt();
+  hideSuggestions();
+  completionAttempted = false;
+  if (route.kind === 'home') {
+    output.replaceChildren();
+    welcome();
+    screen.scrollTop = 0;
+    if (!initial) { screen.focus({preventScroll: true}); announce('Terminal start. Command history retained.'); }
+  } else {
+    const result = route.kind === 'file' ? execute(`open ${route.path}`, cwd) : {
+      kind: 'error', message: 'This document link is not available.',
+      hint: 'Use ls / to browse the available files.', suggestions: ['ls /']
+    };
+    showResult(result, 'view: ', route.path || '[unavailable document]', initial ? 'passive' : 'browse');
+  }
+  rememberCurrentCwd();
+}
+window.addEventListener('popstate', () => navigate());
+window.addEventListener('hashchange', () => navigate());
+navigate(true);
+
+// No initial autofocus. Resize preserves the reader's position, never the bottom.
 if (window.visualViewport) {
   let pending = false;
   const fit = () => {
@@ -198,6 +367,7 @@ if (window.visualViewport) {
     pending = true;
     requestAnimationFrame(() => {
       pending = false;
+      terminal.classList.toggle('compact', innerWidth <= 600 && visualViewport.height <= 420);
       const height = innerWidth <= 600 ? `${Math.max(180, visualViewport.height - 16)}px` : '';
       if (terminal.style.height !== height) terminal.style.height = height;
     });

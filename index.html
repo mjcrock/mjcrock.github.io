@@ -24,11 +24,14 @@
     <div id="announcement" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
     <section class="entry" aria-label="Command input">
       <form id="command-form" autocomplete="off">
-        <label class="prompt" for="command" id="prompt">guest:~ $</label>
-        <input id="command" name="command" type="text" maxlength="500" aria-label="Terminal command" aria-describedby="keyboard-help" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="send">
+        <span class="prompt" id="prompt">guest:~ $</span>
+        <input id="command" name="command" type="text" maxlength="500" aria-label="Terminal command" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="completions" aria-describedby="keyboard-help" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="send">
         <button type="submit" class="run" aria-label="Run command">↵</button>
       </form>
-      <div id="completions" class="completions" role="group" hidden aria-label="Completion suggestions"></div>
+      <div id="completion-panel" class="completion-panel" hidden>
+        <p id="completion-status" class="completion-status"></p>
+        <div id="completions" class="completions" role="listbox" hidden aria-label="Completion choices"></div>
+      </div>
       <div class="toolbar">
         <div class="shortcuts" role="group" aria-label="Suggested commands">
           <button type="button" data-command="help">help</button>
@@ -44,7 +47,7 @@
       <button type="button" id="read-output" class="sr-only focus-show">Read command output</button>
     </section>
     <footer class="status">
-      <span id="keyboard-help">Tab completes · ↑ ↓ recall · Esc cancels</span>
+      <span id="keyboard-help">Tab completes · Tab again leaves · Esc dismisses</span>
       <span class="status-note">content placeholders</span>
     </footer>
   </main>

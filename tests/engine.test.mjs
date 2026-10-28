@@ -9,7 +9,7 @@ const moduleURL = process.env.ENGINE_PATH
 const {COMMANDS, FILES, LIMITS, Session, completions, execute, list, resolvePath} = await import(moduleURL.href);
 
 test('command names and resource limits are explicit and immutable', () => {
-  assert.deepEqual(COMMANDS, ['help', 'ls', 'open', 'cd', 'pwd', 'clear', 'history']);
+  assert.deepEqual(COMMANDS, ['help', 'ls', 'open', 'cat', 'cd', 'pwd', 'clear', 'history']);
   assert.deepEqual(LIMITS, {input: 500, history: 50, output: 40});
   assert.ok(Object.isFrozen(COMMANDS));
   assert.ok(Object.isFrozen(LIMITS));
@@ -106,7 +106,8 @@ test('cd rejects files without changing cwd and gives useful recovery guidance',
   assert.equal(result.kind, 'error');
   assert.equal(result.cwd, '/writing');
   assert.equal(result.message, 'Not a directory: /about');
-  assert.equal(result.hint, 'Use open to read a file.');
+  assert.equal(result.hint, 'Use open /about or cat /about to read this file.');
+  assert.deepEqual(result.suggestions, ['open /about', 'cat /about']);
 });
 
 test('missing paths and unsupported commands fail without changing cwd', () => {
@@ -178,7 +179,7 @@ test('shell syntax, HTML, URL schemes, and prototype names never execute', () =>
 });
 
 test('command completions append a space only for path-accepting commands', () => {
-  assert.deepEqual(completions(''), ['help', 'ls ', 'open ', 'cd ', 'pwd', 'clear', 'history']);
+  assert.deepEqual(completions(''), ['help', 'ls ', 'open ', 'cat ', 'cd ', 'pwd', 'clear', 'history']);
   assert.deepEqual(completions('h'), ['help', 'history']);
   assert.deepEqual(completions('op'), ['open ']);
   assert.deepEqual(completions('  pw'), ['pwd']);
@@ -307,4 +308,156 @@ test('single-line policy rejects non-tab C0/C1 controls, line separators, and di
   }
   assert.deepEqual(session.history, []);
   assert.equal(execute('cd\t/work').kind, 'location');
+});
+
+test('cat returns a distinct text-dump action with the exact file content', () => {
+  for (const [path, entry] of Object.entries(FILES)) {
+    if (entry.type !== 'file') continue;
+    const result = execute(`cat ${path}`, '/work');
+    assert.deepEqual(result, {cwd: '/work', kind: 'cat', path, entry});
+    assert.deepEqual(result.entry.lines, entry.lines);
+    assert.equal(execute(`open ${path}`, '/work').kind, 'file');
+  }
+  assert.deepEqual(execute('cat sample', '/writing'), {
+    cwd: '/writing', kind: 'cat', path: '/writing/sample', entry: FILES['/writing/sample'],
+  });
+  assert.equal(execute('cat ~/work/readme', '/writing').path, '/work/readme');
+});
+
+test('cat requires exactly one path and offers a current-directory listing', () => {
+  for (const command of ['cat', 'cat /about /contact', 'cat -n /about', 'cat /about | pwd']) {
+    const result = execute(command, '/writing');
+    assert.equal(result.kind, 'error', command);
+    assert.equal(result.cwd, '/writing', command);
+    assert.equal(result.message, 'Usage: cat path', command);
+    assert.deepEqual(result.suggestions, ['ls /writing'], command);
+    assert.match(result.hint, /Flags, pipes, and multiple paths are not supported/);
+  }
+});
+
+test('cat rejects directories and offers exact canonical browse commands', () => {
+  for (const input of ['cat /work', 'cat ../work/', 'cat ~/work']) {
+    const result = execute(input, '/writing');
+    assert.equal(result.kind, 'error');
+    assert.equal(result.cwd, '/writing');
+    assert.equal(result.message, 'Is a directory: /work');
+    assert.deepEqual(result.suggestions, ['open /work', 'ls /work']);
+    assert.match(result.hint, /browse/);
+  }
+  assert.deepEqual(execute('cat /').suggestions, ['open /', 'ls /']);
+});
+
+test('cat completion supports intermediate directories without treating them as readable files', () => {
+  assert.deepEqual(completions('ca'), ['cat ']);
+  assert.deepEqual(completions('cat /w'), ['cat /work/', 'cat /writing/']);
+  assert.deepEqual(completions('cat /work/'), ['cat /work/readme']);
+  assert.deepEqual(completions('cat s', '/writing'), ['cat sample']);
+  assert.deepEqual(completions('cat ../work/r', '/writing'), ['cat ../work/readme']);
+  assert.deepEqual(completions('cat ~/w'), ['cat ~/work/', 'cat ~/writing/']);
+  assert.deepEqual(completions('cat /about'), ['cat /about']);
+  assert.deepEqual(completions('cat /about extra'), []);
+  assert.equal(execute(completions('cat /work/')[0]).kind, 'cat');
+  assert.equal(execute(completions('cat /w')[0]).kind, 'error');
+});
+
+test('missing paths recover at the nearest existing directory, not an unrelated cwd', () => {
+  const cases = [
+    ['open missing', '/writing', 'ls /writing'],
+    ['cat /work/missing', '/writing', 'ls /work'],
+    ['ls /work/readme/missing', '/writing', 'ls /work'],
+    ['cd /work/unknown/deeper', '/', 'ls /work'],
+    ['cat ../about/missing', '/writing', 'ls /'],
+    ['open /unknown/deeper', '/writing', 'ls /'],
+    ['open ../../outside', '/work', 'ls /'],
+  ];
+  for (const [command, cwd, browse] of cases) {
+    const result = execute(command, cwd);
+    assert.equal(result.kind, 'error', command);
+    assert.equal(result.cwd, cwd, command);
+    assert.deepEqual(result.suggestions, [browse], command);
+    assert.equal(result.hint, `Use ${browse} to see available paths.`, command);
+    assert.equal(execute(browse, cwd).kind, 'list', command);
+  }
+});
+
+test('argument-error guidance is specific and recovery actions remain explicit', () => {
+  const noArgs = execute('pwd extra', '/writing');
+  assert.equal(noArgs.hint, 'pwd does not take arguments.');
+  assert.deepEqual(noArgs.suggestions, ['pwd']);
+  const paths = execute('open /about /contact', '/work');
+  assert.equal(paths.message, 'Usage: open [path]');
+  assert.deepEqual(paths.suggestions, ['ls /work']);
+});
+
+test('unknown commands suggest allowlisted one-edit matches without running or copying arguments', () => {
+  for (const [input, expected] of [
+    ['hel', ['help']], ['helpp', ['help']], ['heop', ['help']],
+    ['car', ['cat']], ['cdd /writing', ['cd']], ['ld', ['ls', 'cd']],
+  ]) {
+    const result = execute(input, '/work');
+    assert.equal(result.kind, 'error', input);
+    assert.equal(result.cwd, '/work', input);
+    assert.deepEqual(result.suggestions, expected, input);
+    assert.equal(result.hint, `Did you mean ${expected.join(' or ')}?`, input);
+  }
+  const unknown = execute('completely-unknown');
+  assert.deepEqual(unknown.suggestions, ['help']);
+  assert.equal(unknown.hint, 'Type help to see available commands.');
+});
+
+test('command suggestions agree with an independent edit-distance reference', () => {
+  // Full dynamic programming is a validation oracle, not the production shortcut.
+  const distance = (left, right) => {
+    let row = Array.from({length: right.length + 1}, (_, index) => index);
+    for (let i = 0; i < left.length; i++) {
+      const next = [i + 1];
+      for (let j = 0; j < right.length; j++) {
+        next.push(Math.min(next[j] + 1, row[j + 1] + 1, row[j] + (left[i] === right[j] ? 0 : 1)));
+      }
+      row = next;
+    }
+    return row[right.length];
+  };
+  const inputs = new Set(['zzz', 'x'.repeat(LIMITS.input), '__proto__', 'constructor', 'cta', 'Help']);
+  for (const command of COMMANDS) {
+    for (let index = 0; index <= command.length; index++) {
+      inputs.add(command.slice(0, index) + command.slice(index + 1));
+      for (const character of ['a', 'c', 'x']) {
+        inputs.add(command.slice(0, index) + character + command.slice(index));
+        inputs.add(command.slice(0, index) + character + command.slice(index + 1));
+      }
+    }
+  }
+  for (const input of inputs) {
+    if (!input || COMMANDS.includes(input)) continue;
+    const matches = COMMANDS.filter(command => distance(input, command) <= 1);
+    const result = execute(input);
+    assert.equal(result.kind, 'error', input);
+    assert.deepEqual(result.suggestions, matches.length ? matches : ['help'], input);
+    assert.equal(result.hint.startsWith('Did you mean'), matches.length > 0, input);
+  }
+});
+
+test('error suggestions cannot carry hostile raw path or command input', () => {
+  for (const raw of ['cat <img/src=x/onerror=alert(1)>', 'cd /__proto__/constructor', 'open javascript:alert(1)', 'pwd\u202e', 'x'.repeat(501)]) {
+    const result = execute(raw, '/writing');
+    assert.equal(result.kind, 'error');
+    assert.ok(result.suggestions.length > 0);
+    for (const suggestion of result.suggestions) {
+      const [command, path] = suggestion.split(' ');
+      assert.ok(COMMANDS.includes(command), raw);
+      if (path) assert.ok(Object.hasOwn(FILES, path), raw);
+      assert.ok(!/[<>\u202e]/u.test(suggestion), raw);
+    }
+  }
+});
+
+test('cat and recovery errors retain history bounds and preserve the working directory', () => {
+  const session = new Session();
+  session.submit('cd writing');
+  assert.equal(session.submit('cat sample').kind, 'cat');
+  assert.equal(session.submit('cat .').kind, 'error');
+  assert.equal(session.submit('cdd /work').kind, 'error');
+  assert.equal(session.cwd, '/writing');
+  assert.deepEqual(session.history, ['cd writing', 'cat sample', 'cat .', 'cdd /work']);
 });

@@ -1,6 +1,6 @@
 // Pure command model. This is a fixed, read-only virtual filesystem, never a shell.
 export const LIMITS = Object.freeze({input: 500, history: 50, output: 40});
-export const COMMANDS = Object.freeze(['help', 'ls', 'open', 'cd', 'pwd', 'clear', 'history']);
+export const COMMANDS = Object.freeze(['help', 'ls', 'open', 'cat', 'cd', 'pwd', 'clear', 'history']);
 export const FILES = Object.freeze({
   '/': {type: 'directory', description: 'Home'},
   '/about': {type: 'file', title: 'About', lines: ['Generic placeholder.', 'No personal information has been added.']},
@@ -11,9 +11,33 @@ export const FILES = Object.freeze({
   '/contact': {type: 'file', title: 'Contact', lines: ['Generic placeholder.', 'No contact details or form have been added.']}
 });
 
+const PATH_COMMANDS = Object.freeze(['ls', 'open', 'cat', 'cd']);
 const own = path => Object.prototype.hasOwnProperty.call(FILES, path);
 const validText = value => typeof value === 'string' && value.length <= LIMITS.input && !/[\u0000-\u0008\u000A-\u001F\u007F-\u009F\u061C\u200E\u200F\u2028-\u202E\u2066-\u2069]/u.test(value);
-const error = (cwd, message, hint = 'Type help to see available commands.') => ({cwd, kind: 'error', message, hint});
+const error = (cwd, message, hint = 'Type help to see available commands.', suggestions = ['help']) => ({
+  cwd, kind: 'error', message, hint, suggestions
+});
+
+// A bounded one-edit check is enough for short command names; never auto-correct.
+function oneEditApart(value, candidate) {
+  if (Math.abs(value.length - candidate.length) > 1) return false;
+  let left = 0;
+  let right = 0;
+  let edits = 0;
+  while (left < value.length && right < candidate.length) {
+    if (value[left] === candidate[right]) { left++; right++; continue; }
+    if (++edits > 1) return false;
+    if (value.length >= candidate.length) left++;
+    if (candidate.length >= value.length) right++;
+  }
+  return edits + (left < value.length || right < candidate.length ? 1 : 0) <= 1;
+}
+
+const parentPath = path => path.slice(0, path.lastIndexOf('/')) || '/';
+function nearestDirectory(path) {
+  while (!own(path) || FILES[path].type !== 'directory') path = parentPath(path);
+  return path;
+}
 
 export function resolvePath(raw = '.', cwd = '/') {
   if (raw === '~') return '/';
@@ -41,33 +65,49 @@ export function execute(line, cwd = '/', history = []) {
   const [command, ...args] = line.trim().split(/\s+/u).filter(Boolean);
   const result = {cwd, kind: 'empty'};
   if (!command) return result;
-  if (!COMMANDS.includes(command)) return error(cwd, `Unknown command: ${command}`);
-  if (args.length > 1 || (['help', 'pwd', 'clear', 'history'].includes(command) && args.length)) {
-    return error(cwd, `Usage: ${command}${['ls', 'open', 'cd'].includes(command) ? ' [path]' : ''}`, 'Commands accept one path at a time.');
+  if (!COMMANDS.includes(command)) {
+    const matches = COMMANDS.filter(candidate => oneEditApart(command, candidate));
+    return error(cwd, `Unknown command: ${command}`,
+      matches.length ? `Did you mean ${matches.join(' or ')}?` : 'Type help to see available commands.',
+      matches.length ? matches : ['help']);
+  }
+  if (args.length > 1 || (!PATH_COMMANDS.includes(command) && args.length) || (command === 'cat' && !args.length)) {
+    const usage = command === 'cat' ? 'cat path' : command + (PATH_COMMANDS.includes(command) ? ' [path]' : '');
+    const browse = `ls ${cwd}`;
+    return error(cwd, `Usage: ${usage}`, PATH_COMMANDS.includes(command)
+      ? `Choose one path with ${browse}. Flags, pipes, and multiple paths are not supported.`
+      : `${command} does not take arguments.`, PATH_COMMANDS.includes(command) ? [browse] : [command]);
   }
   if (command === 'help' || command === 'clear') return {...result, kind: command};
   if (command === 'history') return {...result, kind: 'history', entries: history.slice(-LIMITS.history)};
   if (command === 'pwd') return {...result, kind: 'text', message: cwd};
   const path = resolvePath(args[0] || (command === 'cd' ? '/' : '.'), cwd);
-  if (!own(path)) return error(cwd, `Not found: ${args[0] || path}`, 'Use ls to see available paths.');
+  if (!own(path)) {
+    const browse = `ls ${nearestDirectory(path)}`;
+    return error(cwd, `Not found: ${args[0] || path}`, `Use ${browse} to see available paths.`, [browse]);
+  }
   const entry = FILES[path];
   if (command === 'cd') return entry.type === 'directory'
     ? {...result, kind: 'location', cwd: path}
-    : error(cwd, `Not a directory: ${path}`, 'Use open to read a file.');
+    : error(cwd, `Not a directory: ${path}`, `Use open ${path} or cat ${path} to read this file.`, [`open ${path}`, `cat ${path}`]);
+  if (command === 'cat' && entry.type === 'directory') {
+    return error(cwd, `Is a directory: ${path}`, `Use open ${path} to browse or ls ${path} to list its contents.`, [`open ${path}`, `ls ${path}`]);
+  }
   if (entry.type === 'directory') return {...result, kind: 'list', path, entries: list(path)};
   if (command === 'ls') return {...result, kind: 'list', path: cwd, entries: [path]};
-  return {...result, kind: 'file', path, entry};
+  return {...result, kind: command === 'cat' ? 'cat' : 'file', path, entry};
 }
 
 export function completions(value, cwd = '/') {
   if (!validText(value)) return [];
   const parts = value.trimStart().split(/\s+/u);
-  if (parts.length === 1) return COMMANDS.filter(c => c.startsWith(parts[0])).map(c => c + (['open', 'ls', 'cd'].includes(c) ? ' ' : ''));
+  if (parts.length === 1) return COMMANDS.filter(c => c.startsWith(parts[0])).map(c => c + (PATH_COMMANDS.includes(c) ? ' ' : ''));
   const [command, prefix] = parts;
-  if (!['open', 'ls', 'cd'].includes(command) || parts.length > 2) return [];
+  if (!PATH_COMMANDS.includes(command) || parts.length > 2) return [];
   const slash = prefix.lastIndexOf('/');
   const base = slash < 0 ? '' : prefix.slice(0, slash + 1);
   const token = prefix.slice(slash + 1);
+  // cat keeps directory candidates so users can complete a file path one segment at a time.
   return list(resolvePath(base || '.', cwd)).filter(path => {
     const name = path.slice(path.lastIndexOf('/') + 1);
     return name.startsWith(token) && (command !== 'cd' || FILES[path].type === 'directory');

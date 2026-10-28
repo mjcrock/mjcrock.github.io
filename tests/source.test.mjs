@@ -8,6 +8,7 @@ const read = name => readFileSync(new URL(name, root), 'utf8');
 const html = read('index.html');
 const app = read('app.js');
 const engine = read('engine.js');
+const routing = read('routing.js');
 const css = read('style.css');
 
 test('all runtime resources are local and exist; legacy stylesheet is removed', () => {
@@ -36,7 +37,7 @@ test('CSP precedes resources and does not allow inline/eval or outbound connecti
 });
 
 test('rendering has no HTML execution, storage, or network APIs', () => {
-  const source = app + engine;
+  const source = app + engine + routing;
   assert.doesNotMatch(source, /\.innerHTML|\.outerHTML|insertAdjacentHTML|document\.write|\beval\s*\(|new Function\b/);
   assert.doesNotMatch(source, /\bfetch\s*\(|XMLHttpRequest|WebSocket|sendBeacon|localStorage|sessionStorage|document\.cookie/);
   assert.match(app, /textContent/);
@@ -47,7 +48,7 @@ test('input limits, named regions, and mobile control labels are explicit', () =
   assert.match(html, new RegExp(`maxlength="${LIMITS.input}"`));
   assert.match(html, /id="screen" role="region"/);
   assert.match(html, /id="complete" aria-label="Complete command or path"/);
-  assert.match(html, /id="completions"[^>]*role="group"/);
+  assert.match(html, /id="completions"[^>]*role="listbox"/);
   assert.match(html, /role="status" aria-live="polite"/);
   assert.doesNotMatch(html, /\sautofocus(?:\s|=|>)/);
   const ids = [...html.matchAll(/\sid="([^"]+)"/g)].map(match => match[1]);
@@ -75,7 +76,19 @@ test('focus pseudo-classes remain valid after stylesheet formatting', () => {
   for (const selector of selectors) {
     assert.doesNotMatch(selector, /:[ \t]+[a-z-]/i, `Whitespace breaks pseudo-selector: ${selector}`);
   }
-  assert.match(css, /button:focus-visible,input:focus-visible,\.screen:focus-visible\s*\{/);
+  assert.match(css, /button:focus-visible,a:focus-visible,input:focus-visible,\.screen:focus-visible\s*\{/);
   assert.match(css, /form:focus-within\s*\{/);
   assert.match(css, /\.block:focus-visible\s*\{/);
+});
+
+
+test('runtime module imports resolve to local files, including the bounded router', () => {
+  for (const source of [app, engine, routing]) {
+    for (const [, path] of source.matchAll(/from ['"]([^'"]+)['"]/g)) {
+      assert.match(path, /^\.\/[a-z-]+\.js$/);
+      assert.ok(existsSync(new URL(path, root)), path);
+    }
+  }
+  assert.match(html, /role="combobox"[^>]*aria-autocomplete="list"/);
+  assert.match(html, /id="completion-panel"[^>]*hidden/);
 });

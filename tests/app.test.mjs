@@ -53,6 +53,7 @@ test('delegated shortcut clicks on nested content focus the result, not the inpu
   assert.ok(app.metrics.focusCalls.every(call => call.node !== app.input));
   assert.match(result.textContent, /Placeholder content only/);
   assert.equal(app.announcement.textContent, 'Opened Sample document.');
+  assert.equal(app.location.hash, '#/writing/sample');
 });
 
 test('dynamic listing and help buttons use the same delegated command handler', async () => {
@@ -61,10 +62,12 @@ test('dynamic listing and help buttons use the same delegated command handler', 
   const listingButton = app.output.lastElementChild.querySelectorAll('button').find(node => node.dataset.command === 'open /writing');
   app.click(listingButton);
   assert.match(app.output.lastElementChild.textContent, /sample/);
+  app.click(app.output.lastElementChild.querySelector('button'));
+  assert.equal(app.location.hash, '#/writing/sample');
   app.click(app.shortcuts[0]);
-  const helpButton = app.output.lastElementChild.querySelectorAll('button').find(node => node.dataset.command === 'open /writing/sample');
+  const helpButton = app.output.lastElementChild.querySelectorAll('button').find(node => node.dataset.command === 'cat /writing/sample');
   app.click(helpButton);
-  assert.match(app.output.lastElementChild.textContent, /Sample document/);
+  assert.match(app.output.lastElementChild.textContent, /Placeholder content only/);
 });
 
 test('delegation ignores non-buttons, unrelated buttons, and foreign button targets', async () => {
@@ -110,65 +113,128 @@ test('arrow history and toolbar controls restore an unfinished draft', async () 
   assert.equal(app.input.value, 'open /w');
 });
 
-test('unique Tab completion edits input and only then prevents default', async () => {
+test('unique Tab completion is visible and the next Tab leaves natively', async () => {
   const app = await ready();
   app.change('op');
   assert.equal(app.key('Tab').defaultPrevented, true);
   assert.equal(app.input.value, 'open ');
   assert.equal(app.suggestions.hidden, true);
-  assert.equal(app.announcement.textContent, 'Completed: open ');
+  assert.equal(app.completionPanel.hidden, false);
+  assert.match(app.completionStatus.textContent, /Completed: open/);
+  assert.equal(app.input.getAttribute('aria-expanded'), 'false');
+  assert.equal(app.key('Tab').defaultPrevented, false);
+  assert.equal(app.input.value, 'open ');
+  assert.equal(app.completionPanel.hidden, true);
   app.change('pwd');
   assert.equal(app.key('Tab').defaultPrevented, false);
-  app.change('unmatched');
-  assert.equal(app.key('Tab').defaultPrevented, false);
-  assert.equal(app.announcement.textContent, 'No matching completion.');
+  assert.equal(app.input.value, 'pwd');
+  assert.match(app.completionStatus.textContent, /Already complete/);
 });
 
-test('multiple completions expose controls and leave the next Tab for native navigation', async () => {
+test('no-match completion is visible without trapping Tab or modifying the command', async () => {
+  const app = await ready();
+  app.change('unmatched');
+  const count = app.output.children.length;
+  assert.equal(app.key('Tab').defaultPrevented, false);
+  assert.equal(app.input.value, 'unmatched');
+  assert.equal(app.completionPanel.hidden, false);
+  assert.equal(app.suggestions.hidden, true);
+  assert.match(app.completionStatus.textContent, /No matching completion/);
+  assert.match(app.announcement.textContent, /No matching completion/);
+  assert.equal(app.output.children.length, count);
+});
+
+test('multiple options have coherent combobox selection and a native Tab exit', async () => {
   const app = await ready();
   app.change('h');
   assert.equal(app.key('Tab').defaultPrevented, true);
   assert.equal(app.suggestions.hidden, false);
   assert.equal(app.suggestions.children.length, 2);
   assert.equal(app.input.getAttribute('aria-controls'), 'completions');
+  assert.equal(app.input.getAttribute('aria-expanded'), 'true');
+  const first = app.suggestions.firstElementChild;
+  assert.equal(first.getAttribute('role'), 'option');
+  assert.equal(first.tabIndex, -1);
+  assert.equal(first.getAttribute('aria-selected'), 'true');
+  assert.equal(app.input.getAttribute('aria-activedescendant'), first.id);
   assert.equal(app.key('Tab').defaultPrevented, false);
-  const nested = app.document.createElement('span');
-  app.suggestions.firstElementChild.append(nested);
-  app.click(nested);
-  assert.equal(app.input.value, 'help');
+  assert.equal(app.input.value, 'h');
   assert.equal(app.suggestions.hidden, true);
-  assert.equal(app.suggestions.children.length, 0);
-  assert.equal(app.input.getAttribute('aria-controls'), null);
-  assert.equal(app.document.activeElement, app.input);
+  assert.equal(app.input.getAttribute('aria-expanded'), 'false');
+  assert.equal(app.input.getAttribute('aria-activedescendant'), null);
 });
 
-test('completion button supports blank input and retains trailing spaces in selected values', async () => {
+test('arrows select options and Enter accepts without executing or recalling history', async () => {
+  const app = await ready();
+  app.submit('pwd');
+  app.change('h');
+  app.key('Tab');
+  const count = app.output.children.length;
+  assert.equal(app.key('ArrowDown').defaultPrevented, true);
+  assert.equal(app.input.value, 'h');
+  const selected = app.document.getElementById(app.input.getAttribute('aria-activedescendant'));
+  assert.equal(selected.textContent, 'history');
+  assert.equal(selected.getAttribute('aria-selected'), 'true');
+  assert.equal(app.suggestions.firstElementChild.getAttribute('aria-selected'), 'false');
+  assert.equal(app.key('Enter').defaultPrevented, true);
+  assert.equal(app.input.value, 'history');
+  assert.equal(app.output.children.length, count);
+  assert.equal(app.suggestions.hidden, true);
+  assert.equal(app.input.getAttribute('aria-activedescendant'), null);
+  // Native implicit form submission is outside this fixture: model its next submit.
+  assert.equal(app.key('Enter').defaultPrevented, false);
+  app.submit(app.input.value);
+  assert.equal(app.output.lastElementChild.querySelectorAll('li').length, 2);
+  assert.match(app.output.lastElementChild.textContent, /pwd/);
+});
+
+test('the Run control executes literal input rather than accepting a guessed option', async () => {
+  const app = await ready();
+  app.change('h');
+  app.key('Tab');
+  const count = app.output.children.length;
+  assert.equal(app.dispatch(app.form, 'submit').defaultPrevented, true);
+  assert.equal(app.input.value, '');
+  assert.equal(app.output.children.length, count + 1);
+  assert.match(app.output.lastElementChild.textContent, /Unknown command: h/);
+  assert.equal(app.suggestions.hidden, true);
+});
+
+test('nested completion clicks fill only and preserve trailing spaces', async () => {
   const app = await ready();
   app.click(button(app, 'complete'));
   assert.equal(app.suggestions.hidden, false);
-  assert.equal(app.suggestions.children.length, 7);
+  assert.equal(app.suggestions.children.length, 8);
+  const count = app.output.children.length;
   const open = app.suggestions.children.find(node => node.textContent === 'open');
-  app.click(open);
+  const nested = app.document.createElement('span');
+  open.append(nested);
+  app.click(nested);
   assert.equal(app.input.value, 'open ');
+  assert.equal(app.output.children.length, count);
   assert.equal(app.document.activeElement, app.input);
+  assert.equal(app.suggestions.hidden, true);
+  assert.equal(app.key('Tab').defaultPrevented, false);
 });
 
-test('editing and Escape dismiss suggestions and remove their ARIA association', async () => {
+test('editing or Escape dismisses choices while preserving the typed draft', async () => {
   const app = await ready();
   app.change('h');
   app.key('Tab');
   app.change('he');
   assert.equal(app.suggestions.hidden, true);
-  assert.equal(app.input.getAttribute('aria-controls'), null);
+  assert.equal(app.input.getAttribute('aria-expanded'), 'false');
   app.change('h');
   app.key('Tab');
-  app.key('Escape');
-  assert.equal(app.input.value, '');
+  assert.equal(app.key('Escape').defaultPrevented, true);
+  assert.equal(app.input.value, 'h');
   assert.equal(app.suggestions.hidden, true);
   assert.equal(app.suggestions.children.length, 0);
+  assert.equal(app.key('Escape').defaultPrevented, false);
+  assert.equal(app.input.value, 'h');
 });
 
-test('Escape from a completion choice dismisses it and returns to command input', async () => {
+test('Escape from a completion choice dismisses it and returns to the unchanged input', async () => {
   const app = await ready();
   app.change('h');
   app.key('Tab');
@@ -180,38 +246,56 @@ test('Escape from a completion choice dismisses it and returns to command input'
   assert.equal(app.suggestions.hidden, true);
 });
 
-test('modified and composing Escape events leave completion choices and focus untouched', async () => {
+test('modified and composing option keys leave choices, input, and focus untouched', async () => {
   const app = await ready();
   app.change('h');
   app.key('Tab');
   const choice = app.suggestions.firstElementChild;
   choice.focus();
+  const selected = app.input.getAttribute('aria-activedescendant');
   for (const modifier of ['ctrlKey', 'metaKey', 'altKey', 'shiftKey', 'isComposing']) {
-    const event = app.key('Escape', {[modifier]: true}, choice);
-    assert.equal(event.defaultPrevented, false, modifier);
-    assert.equal(app.suggestions.hidden, false, modifier);
-    assert.equal(app.document.activeElement, choice, modifier);
-    assert.equal(app.input.value, 'h', modifier);
-    assert.equal(app.input.getAttribute('aria-controls'), 'completions', modifier);
+    for (const key of ['Escape', 'ArrowUp', 'ArrowDown', 'Enter']) {
+      const event = app.key(key, {[modifier]: true}, choice);
+      assert.equal(event.defaultPrevented, false, `${modifier} ${key}`);
+      assert.equal(app.suggestions.hidden, false, `${modifier} ${key}`);
+      assert.equal(app.document.activeElement, choice, `${modifier} ${key}`);
+      assert.equal(app.input.value, 'h', `${modifier} ${key}`);
+      assert.equal(app.input.getAttribute('aria-activedescendant'), selected);
+    }
   }
 });
 
-test('modified shortcuts, IME events, Shift-Tab, and blank Tab remain untouched', async () => {
+test('input modifiers and IME do not alter completion selection or drafts', async () => {
   const app = await ready();
   app.submit('pwd');
-  for (const modifier of ['ctrlKey', 'metaKey', 'altKey', 'isComposing']) {
-    for (const key of ['ArrowUp', 'ArrowDown', 'Tab', 'Escape']) {
-      app.change('draft');
+  for (const modifier of ['ctrlKey', 'metaKey', 'altKey', 'shiftKey', 'isComposing']) {
+    for (const key of ['ArrowUp', 'ArrowDown', 'Enter', 'Escape']) {
+      app.change('h');
+      app.key('Tab');
+      const selected = app.input.getAttribute('aria-activedescendant');
       assert.equal(app.key(key, {[modifier]: true}).defaultPrevented, false, `${modifier} ${key}`);
-      assert.equal(app.input.value, 'draft', `${modifier} ${key}`);
-      assert.equal(app.suggestions.hidden, true);
+      assert.equal(app.input.value, 'h', `${modifier} ${key}`);
+      assert.equal(app.suggestions.hidden, false, `${modifier} ${key}`);
+      assert.equal(app.input.getAttribute('aria-activedescendant'), selected);
     }
   }
+});
+
+test('normal Shift-Tab exits, but modified or composing Shift-Tab remains untouched', async () => {
+  const app = await ready();
   app.change('h');
+  app.key('Tab');
+  for (const modifier of ['ctrlKey', 'metaKey', 'altKey', 'isComposing']) {
+    assert.equal(app.key('Tab', {shiftKey: true, [modifier]: true}).defaultPrevented, false);
+    assert.equal(app.suggestions.hidden, false, modifier);
+    assert.equal(app.input.value, 'h');
+  }
   assert.equal(app.key('Tab', {shiftKey: true}).defaultPrevented, false);
   assert.equal(app.suggestions.hidden, true);
+  assert.equal(app.input.value, 'h');
   app.change('');
   assert.equal(app.key('Tab').defaultPrevented, false);
+  assert.equal(app.suggestions.hidden, true);
 });
 
 test('200 commands retain 40 blocks, add no listeners, and reveal each result immediately', async () => {
@@ -346,4 +430,249 @@ test('invalid line and direction controls are neither echoed nor recalled', asyn
   app.change('draft');
   app.key('ArrowUp');
   assert.equal(app.input.value, 'draft');
+});
+
+
+test('composition prevents implicit submission until composition ends', async () => {
+  const app = await ready();
+  app.change('pwd');
+  const count = app.output.children.length;
+  app.dispatch(app.input, 'compositionstart');
+  assert.equal(app.dispatch(app.form, 'submit').defaultPrevented, true);
+  assert.equal(app.input.value, 'pwd');
+  assert.equal(app.output.children.length, count);
+  app.dispatch(app.input, 'compositionend');
+  app.dispatch(app.form, 'submit');
+  assert.equal(app.input.value, '');
+  assert.equal(app.output.children.length, count + 1);
+});
+
+test('clicking the prompt row focuses input but never steals text selection or output focus', async () => {
+  const app = await ready();
+  app.click(app.form);
+  assert.equal(app.document.activeElement, app.input);
+  app.screen.focus();
+  app.resetMetrics();
+  app.click(app.screen);
+  app.click(app.output.firstElementChild);
+  assert.equal(app.document.activeElement, app.screen);
+  assert.equal(app.metrics.focusCalls.length, 0);
+  app.selectText('guest:~ $');
+  assert.equal(app.click(app.prompt).defaultPrevented, true);
+  assert.equal(app.document.activeElement, app.screen);
+  assert.equal(app.metrics.focusCalls.length, 0);
+  app.selectText('');
+  app.click(app.prompt);
+  assert.equal(app.document.activeElement, app.input);
+});
+
+test('contextual error buttons fill safe recovery commands without running them', async () => {
+  const app = await ready();
+  app.submit('cat /writing');
+  const error = app.output.lastElementChild;
+  assert.match(error.textContent, /Is a directory: \/writing/);
+  const recovery = error.querySelectorAll('button').find(node => node.textContent === 'open /writing');
+  assert.ok(recovery);
+  const nested = app.document.createElement('span');
+  recovery.append(nested);
+  const count = app.output.children.length;
+  app.click(nested);
+  assert.equal(app.input.value, 'open /writing');
+  assert.equal(app.output.children.length, count);
+  assert.equal(app.document.activeElement, app.input);
+  assert.equal(app.location.hash, '');
+  app.submit(app.input.value);
+  assert.match(app.output.lastElementChild.textContent, /sample/);
+  assert.equal(app.location.hash, '');
+  app.submit('opn /about');
+  const correction = app.output.lastElementChild.querySelectorAll('button').find(node => node.textContent === 'open');
+  assert.ok(correction);
+  const before = app.output.children.length;
+  app.click(correction);
+  assert.equal(app.input.value, 'open');
+  assert.equal(app.output.children.length, before);
+  assert.equal(app.location.hash, '');
+});
+
+test('cat emits raw file text without document chrome or URL navigation', async () => {
+  const app = await ready();
+  app.submit('open /about');
+  const hash = app.location.hash;
+  const entries = app.history.length;
+  app.submit('cat /writing/sample');
+  const body = app.output.lastElementChild.querySelector('.result');
+  assert.equal(body.children.length, 1);
+  assert.equal(body.firstElementChild.tagName, 'PRE');
+  assert.equal(body.firstElementChild.className, 'file-text');
+  assert.equal(body.firstElementChild.textContent, 'Placeholder content only.\nThis sample exists to test reading and navigation. It does not describe a person, project, or publication.');
+  assert.equal(body.querySelector('h2'), null);
+  assert.equal(body.querySelector('a'), null);
+  assert.equal(body.querySelector('.file-path'), null);
+  assert.equal(app.location.hash, hash);
+  assert.equal(app.history.length, entries);
+});
+
+test('open creates a document link while directory and cat operations do not push routes', async () => {
+  const app = await ready();
+  app.submit('open /about');
+  assert.equal(app.location.hash, '#/about');
+  assert.equal(app.history.length, 2);
+  const link = app.output.lastElementChild.querySelector('a');
+  assert.equal(link.href, '#/about');
+  assert.match(app.output.lastElementChild.querySelector('h2').textContent, /About/);
+  app.submit('open /about');
+  assert.equal(app.history.length, 2, 'Same document must not add a duplicate URL entry');
+  for (const command of ['ls /', 'open /writing', 'cd /writing', 'cat sample']) {
+    app.submit(command);
+    assert.equal(app.history.length, 2, command);
+    assert.equal(app.location.hash, '#/about', command);
+  }
+});
+
+test('Back and Forward restore document/cwd without running commands or dropping the draft', async () => {
+  const app = await ready();
+  app.submit('cd /writing');
+  app.submit('open sample');
+  app.submit('open /work/readme');
+  app.submit('cd /');
+  app.change('unfinished command');
+  const count = app.output.children.length;
+  app.history.back();
+  assert.equal(app.location.hash, '#/writing/sample');
+  assert.equal(app.prompt.textContent, 'guest:~/writing $');
+  assert.equal(app.input.value, 'unfinished command');
+  assert.equal(app.output.children.length, count + 1, 'Paired popstate/hashchange must render once');
+  assert.equal(app.output.lastElementChild.querySelector('.file-title').textContent, 'Sample document');
+  app.history.forward();
+  assert.equal(app.location.hash, '#/work/readme');
+  assert.equal(app.prompt.textContent, 'guest:~ $');
+  assert.equal(app.input.value, 'unfinished command');
+  assert.equal(app.output.children.length, count + 2);
+  assert.equal(app.output.lastElementChild.querySelector('.file-title').textContent, 'Work');
+  app.submit('history');
+  const commands = app.output.lastElementChild.querySelectorAll('button').map(node => node.textContent);
+  assert.deepEqual(commands, ['cd /writing', 'open sample', 'open /work/readme', 'cd /', 'history']);
+});
+
+test('Back to the initial entry restores welcome without clearing command history', async () => {
+  const app = await ready();
+  app.submit('open /about');
+  app.change('draft');
+  app.history.back();
+  assert.equal(app.location.hash, '');
+  assert.equal(app.output.children.length, 1);
+  assert.match(app.output.textContent, /Interactive terminal/);
+  assert.equal(app.input.value, 'draft');
+  assert.equal(app.document.activeElement, app.screen);
+  app.history.forward();
+  assert.equal(app.output.lastElementChild.querySelector('.file-title').textContent, 'About');
+  app.submit('history');
+  assert.deepEqual(app.output.lastElementChild.querySelectorAll('button').map(node => node.textContent), ['open /about', 'history']);
+});
+
+test('fresh document links load passively at root without recording an open command', async () => {
+  const app = await ready({hash: '#/writing/sample'});
+  assert.equal(app.document.activeElement, app.document.body);
+  assert.equal(app.prompt.textContent, 'guest:~ $');
+  assert.equal(app.output.lastElementChild.querySelector('.file-title').textContent, 'Sample document');
+  assert.equal(app.history.length, 1);
+  app.change('draft');
+  app.key('ArrowUp');
+  assert.equal(app.input.value, 'draft');
+  app.submit('history');
+  assert.deepEqual(app.output.lastElementChild.querySelectorAll('button').map(node => node.textContent), ['history']);
+});
+
+test('malformed and unknown initial hashes are safely rejected without autofocus or raw echo', async () => {
+  for (const hash of ['#%', '#/writing', '#/../../etc/passwd', '#<img/src=x/onerror=alert(1)>', '#' + 'x'.repeat(501)]) {
+    const app = await ready({hash});
+    assert.equal(app.document.activeElement, app.document.body, hash);
+    assert.match(app.output.textContent, /document link is not available/);
+    assert.ok(!app.output.textContent.includes(hash.slice(1)), hash);
+    assert.equal(app.output.querySelectorAll('img').length, 0);
+    app.change('draft');
+    app.key('ArrowUp');
+    assert.equal(app.input.value, 'draft');
+  }
+});
+
+test('forged history data cannot restore an invalid cwd or execute embedded commands', async () => {
+  const app = await ready({hash: '#/about', state: {terminal: {path: '/about', cwd: '__proto__', command: 'clear', raw: 'cat /contact'}}});
+  assert.equal(app.prompt.textContent, 'guest:~ $');
+  assert.equal(app.output.lastElementChild.querySelector('.file-title').textContent, 'About');
+  assert.deepEqual(app.history.state, {terminal: {path: '/about', cwd: '/'}});
+  app.submit('history');
+  assert.deepEqual(app.output.lastElementChild.querySelectorAll('button').map(node => node.textContent), ['history']);
+});
+
+test('manual hash navigation deduplicates paired events and uses only the allowed resource', async () => {
+  const app = await ready();
+  app.submit('cd /writing');
+  const count = app.output.children.length;
+  app.navigateHash('#/contact');
+  assert.equal(app.prompt.textContent, 'guest:~ $');
+  assert.equal(app.output.children.length, count + 1);
+  assert.equal(app.output.lastElementChild.querySelector('.file-title').textContent, 'Contact');
+  app.navigateHash('#clear');
+  assert.match(app.output.lastElementChild.textContent, /document link is not available/);
+  app.submit('history');
+  assert.deepEqual(app.output.lastElementChild.querySelectorAll('button').map(node => node.textContent), ['cd /writing', 'history']);
+});
+
+test('repeated browser navigation remains output-bounded and adds no per-result listeners', async () => {
+  const app = await ready();
+  app.submit('open /about');
+  app.submit('open /contact');
+  const listeners = app.metrics.listeners;
+  for (let index = 0; index < 100; index++) { app.history.back(); app.history.forward(); }
+  assert.equal(app.output.children.length, 40);
+  assert.equal(app.metrics.listeners, listeners);
+  assert.equal(app.history.length, 3);
+  app.submit('history');
+  assert.deepEqual(app.output.lastElementChild.querySelectorAll('button').map(node => node.textContent), ['open /about', 'open /contact', 'history']);
+});
+
+test('history API write failure cannot prevent document rendering or further commands', async () => {
+  const app = await ready();
+  app.history.failWrites = true;
+  app.submit('open /about');
+  assert.equal(app.location.hash, '');
+  assert.equal(app.output.lastElementChild.querySelector('.file-title').textContent, 'About');
+  assert.match(app.announcement.textContent, /could not update the document link/);
+  app.submit('pwd');
+  assert.equal(app.output.lastElementChild.querySelector('.result').textContent, '/');
+});
+
+
+test('browser navigation invalidates visible completion state without deleting its draft', async () => {
+  const app = await ready();
+  app.submit('open /about');
+  app.submit('open /contact');
+  app.change('h');
+  app.key('Tab');
+  assert.equal(app.input.getAttribute('aria-expanded'), 'true');
+  app.history.back();
+  assert.equal(app.input.value, 'h');
+  assert.equal(app.completionPanel.hidden, true);
+  assert.equal(app.suggestions.children.length, 0);
+  assert.equal(app.input.getAttribute('aria-expanded'), 'false');
+  assert.equal(app.input.getAttribute('aria-activedescendant'), null);
+  assert.equal(app.location.hash, '#/about');
+});
+
+
+test('compact mode follows the visual viewport without changing the draft or reader position', async () => {
+  const app = await ready({width: 390, height: 650});
+  app.change('unfinished command');
+  app.screen.scrollTop = 123;
+  app.resetMetrics();
+  for (const [width, height, compact] of [[390, 300, true], [390, 650, false], [390, 300, true], [1000, 300, false]]) {
+    app.resize(width, height);
+    app.flushFrame();
+    assert.equal(app.terminal.classList.contains('compact'), compact, `${width}x${height}`);
+    assert.equal(app.input.value, 'unfinished command');
+    assert.equal(app.screen.scrollTop, 123);
+  }
+  assert.equal(app.metrics.scrollWrites, 0);
+  assert.equal(app.metrics.geometryReads, 0);
 });
