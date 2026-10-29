@@ -32,6 +32,7 @@ jobs:
           node --check app.js
           node --check engine.js
           node --check routing.js
+          node --check snake.js
           node --check markdown.js
           node --check scripts/serve.mjs
           node --check tests/browser-check.mjs
@@ -40,7 +41,7 @@ jobs:
         run: |
           mkdir _site
           node scripts/update-readme.mjs > _site/index.html
-          cp style.css app.js engine.js routing.js README.md _site/
+          cp style.css app.js engine.js routing.js snake.js README.md _site/
           touch _site/.nojekyll
       - name: Upload site
         uses: actions/upload-pages-artifact@7b1f4a764d45c48632c6b24a0339c27f5614fb0b # v4

@@ -5,7 +5,7 @@ import {join, sep} from 'node:path';
 import {fileURLToPath, pathToFileURL} from 'node:url';
 import {renderIndex} from './update-readme.mjs';
 
-const files = new Set(['index.html', 'style.css', 'app.js', 'engine.js', 'routing.js', 'README.md']);
+const files = new Set(['index.html', 'style.css', 'app.js', 'engine.js', 'routing.js', 'snake.js', 'README.md']);
 const types = {html: 'text/html', css: 'text/css', js: 'text/javascript', md: 'text/plain'};
 
 export async function startServer({root = new URL('../', import.meta.url), port = 0} = {}) {

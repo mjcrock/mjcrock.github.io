@@ -78,16 +78,50 @@ try {
       await page.goto(url); await page.locator('.initial-document').waitFor();
       await page.locator('.entry').waitFor();
       await run('python');
-      assert.equal(await page.locator('.snake').last().evaluate(node => getComputedStyle(node).animationName), 'none');
-      await page.emulateMedia({reducedMotion: 'no-preference'});
-      await run('python3');
-      const finished = await page.locator('.snake').last().evaluate(async node => {
-        const animations = node.getAnimations();
-        if (!animations.length || animations.some(animation => animation.effect.getComputedTiming().endTime > 3000)) return false;
-        await Promise.all(animations.map(animation => animation.finished));
-        return node.getAnimations().every(animation => animation.playState !== 'running');
-      });
-      assert.equal(finished, true, 'snake animation ends within three seconds');
+      const still = await page.locator('.snake').last().textContent();
+      assert.ok(still.includes(')--<'));
+      assert.equal(await page.locator('.snake-active').count(), 0);
+
+      const animation = await browser.newPage({viewport: {width: 320, height: 650}, reducedMotion: 'no-preference'});
+      await animation.clock.install();
+      await animation.goto(url);
+      await animation.locator('.entry').waitFor();
+      await animation.clock.pauseAt(new Date(await animation.evaluate(() => Date.now()) + 1000));
+      const command = animation.locator('#command');
+      await command.fill('python3'); await command.press('Enter');
+      const art = animation.locator('.snake').last();
+      const bounds = await art.boundingBox();
+      const promptBounds = await command.boundingBox();
+      assert.equal(await animation.locator('.snake-active').count(), 1);
+      const durations = [240, 320, 80, 100, 80, 220, 200, 120, 160, 80, 80, 120, 80, 80, 80, 160, 80, 280, 400];
+      for (const [index, duration] of durations.entries()) {
+        assert.deepEqual((await art.textContent()).split('\n').map(line => line.length), Array(12).fill(34));
+        assert.doesNotMatch((await art.textContent()).split('\n')[2].slice(27), /_/, 'No cursor prop beside the tongue');
+        assert.deepEqual(await art.boundingBox(), bounds, 'The coil keeps its fixed geometry');
+        assert.deepEqual(await command.boundingBox(), promptBounds, 'The real input never moves');
+        assert.equal(await animation.locator('.snake-active').count(), index === 18 ? 0 : 1);
+        await animation.clock.runFor(duration);
+      }
+      const rest = await art.textContent();
+      await animation.clock.runFor(5000);
+      assert.equal(await art.textContent(), rest, 'The sequence does not loop');
+      await command.fill('python'); await command.press('Enter');
+      await animation.clock.runFor(1040);
+      await command.press('x');
+      assert.equal(await command.inputValue(), 'x');
+      assert.equal(await animation.locator('.snake-active').count(), 0);
+      await command.fill('python'); await command.press('Enter');
+      await animation.emulateMedia({reducedMotion: 'reduce'});
+      await animation.waitForFunction(() => !document.querySelector('.terminal').classList.contains('snake-active'));
+      assert.equal(await art.textContent(), still);
+      for (const [width, height] of [[320, 300], [390, 650], [844, 390], [1280, 900]]) {
+        await animation.setViewportSize({width, height});
+        await animation.clock.runFor(32);
+        assert.equal(await animation.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+        assert.equal(await art.evaluate(node => node.scrollWidth <= node.clientWidth + 1), true);
+        assert.equal(await art.evaluate(node => getComputedStyle(node).fontVariantLigatures), 'none');
+      }
+      await animation.close();
       await run('help');
       assert.doesNotMatch(await page.locator('.help-list').last().textContent(), /python/);
       assert.ok(requests.every(request => new URL(request).origin === new URL(url).origin));

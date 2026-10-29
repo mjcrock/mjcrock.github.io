@@ -1,5 +1,6 @@
 import {FILES, LIMITS, Session, completions, execute} from './engine.js';
 import {parseDocumentHash, documentHash, navigationState, navigationCwd} from './routing.js';
+import {createSnakePlayer} from './snake.js';
 
 const $ = id => document.getElementById(id);
 const output = $('output');
@@ -12,6 +13,7 @@ const completionPanel = $('completion-panel');
 const completionStatus = $('completion-status');
 const announcement = $('announcement');
 const terminal = document.querySelector('.terminal');
+const snakePlayer = createSnakePlayer(window, visible => terminal.classList.toggle('snake-active', !visible));
 // The build supplies the readable document. Retain it when output is cleared.
 const readme = output.firstElementChild.cloneNode(true);
 const rawReadme = $('readme-source').textContent;
@@ -48,6 +50,7 @@ function hideSuggestions() {
 }
 
 function fillCommand(value) {
+  snakePlayer.finish();
   input.value = value;
   completionAttempted = false;
   hideSuggestions();
@@ -125,12 +128,9 @@ function renderResult(parent, result) {
     readmeSource ??= JSON.parse(rawReadme);
     parent.append(element('pre', readmeSource, 'file-text'));
   } else if (result.kind === 'snake') {
-    const snake = element('pre', String.raw`     __
- ___/ o\
-/   \__/-<
-\___/`, 'snake');
+    const snake = element('pre', undefined, 'snake');
     snake.setAttribute('role', 'img');
-    snake.setAttribute('aria-label', 'An ASCII python snake');
+    snake.setAttribute('aria-label', 'A coiled python flicks its tongue');
     parent.append(snake);
   } else if (result.kind === 'history') {
     const list = element('ol', undefined, 'history-list');
@@ -167,6 +167,7 @@ function showResult(result, prefix, raw, mode, showEcho = true) {
     if (showEcho) block.append(echo);
     block.append(body);
     output.append(block);
+    if (result.kind === 'snake') snakePlayer.play(body.firstElementChild);
     while (output.children.length > LIMITS.output) output.firstElementChild.remove();
     // Reveal synchronously: a later reader scroll must never be overwritten.
     screen.scrollTop = Math.max(0, block.offsetTop - screen.offsetTop - 12);
@@ -208,6 +209,7 @@ function rememberDocument(path) {
 }
 
 function run(raw, mode = 'typed') {
+  snakePlayer.finish();
   if (typeof raw !== 'string' || !raw.trim()) return;
   hideSuggestions();
   completionAttempted = false;
@@ -252,6 +254,7 @@ function acceptChoice(index = selectedChoice) {
 }
 
 function complete() {
+  snakePlayer.finish();
   const options = completions(input.value, session.cwd);
   hideSuggestions();
   completionAttempted = true;
@@ -297,10 +300,12 @@ form.addEventListener('click', event => {
   }
   focusInput();
 });
-input.addEventListener('input', () => { completionAttempted = false; hideSuggestions(); });
-input.addEventListener('compositionstart', () => { composing = true; });
+input.addEventListener('beforeinput', () => snakePlayer.finish());
+input.addEventListener('input', () => { snakePlayer.finish(); completionAttempted = false; hideSuggestions(); });
+input.addEventListener('compositionstart', () => { snakePlayer.finish(); composing = true; });
 input.addEventListener('compositionend', () => { composing = false; });
 input.addEventListener('keydown', event => {
+  snakePlayer.finish();
   // Some IMEs report the conversion key before/after isComposing is updated.
   if (composing || event.isComposing || event.keyCode === 229 || event.ctrlKey || event.metaKey || event.altKey) return;
   if (event.shiftKey) {
@@ -353,6 +358,7 @@ function navigate(initial = false) {
   const cwd = navigationCwd(window.history.state, route.path);
   const signature = routeSignature(route, cwd);
   if (!initial && signature === lastNavigation) return;
+  snakePlayer.finish();
   lastNavigation = signature;
   session.cwd = cwd;
   updatePrompt();
