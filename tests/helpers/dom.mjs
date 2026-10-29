@@ -8,7 +8,7 @@ import {renderIndex} from '../../scripts/update-readme.mjs';
  * It models the APIs the app uses and counts writes/reads. Real rendering,
  * focus defaults, accessibility trees, CSP, and mobile keyboards need browser QA.
  */
-export async function createApp({root = new URL('../../', import.meta.url), width = 1000, height = 800, viewport = true, hash = '', state = null} = {}) {
+export async function createApp({root = new URL('../../', import.meta.url), width = 1000, height = 800, viewport = true, hash = '', state = null, reducedMotion = false} = {}) {
   if (typeof root === 'string') root = pathToFileURL(root.endsWith('/') ? root : `${root}/`);
   const source = await readFile(new URL('app.js', root), 'utf8');
   const markup = await renderIndex(root);
@@ -19,7 +19,7 @@ export async function createApp({root = new URL('../../', import.meta.url), widt
     modules[name] = await import(new URL(`${name}.js`, root).href);
   }
   if (!modules.engine) throw new Error('Update harness for changed app import structure.');
-  const metrics = {listeners: 0, geometryReads: 0, scrollWrites: 0, heightWrites: 0, framesScheduled: 0, focusCalls: []};
+  const metrics = {listeners: 0, geometryReads: 0, scrollWrites: 0, heightWrites: 0, framesScheduled: 0, timersScheduled: 0, focusCalls: []};
   const frames = new Map();
   let nextFrame = 0;
   let serial = 0;
@@ -112,6 +112,7 @@ export async function createApp({root = new URL('../../', import.meta.url), widt
       if (this.parentNode) this.parentNode.childNodes.splice(this.parentNode.childNodes.indexOf(this), 1);
       this.parentNode = null;
     }
+    get isConnected() { return document.documentElement.contains(this); }
     contains(node) {
       for (let current = node; current; current = current.parentNode) if (current === this) return true;
       return false;
@@ -152,13 +153,16 @@ export async function createApp({root = new URL('../../', import.meta.url), widt
       callbacks.push(callback);
       this.listeners.set(type, callbacks);
     }
+    removeEventListener(type, callback) {
+      this.listeners.set(type, (this.listeners.get(type) ?? []).filter(listener => listener !== callback));
+    }
     focus(options) { document.activeElement = this; metrics.focusCalls.push({node: this, options}); }
     setSelectionRange(start, end) { this.selectionStart = start; this.selectionEnd = end; }
   }
 
   let selectedText = '';
   const selection = {get isCollapsed() { return selectedText.length === 0; }, toString: () => selectedText};
-  const document = {
+  const document = Object.assign(new Node('document'), {
     title: 'guest / terminal study',
     getSelection: () => selection,
     createElement: tag => new Node(tag),
@@ -166,7 +170,8 @@ export async function createApp({root = new URL('../../', import.meta.url), widt
     getElementById: id => document.documentElement.querySelector(`#${id}`),
     querySelector: selector => document.documentElement.querySelector(selector),
     querySelectorAll: selector => document.documentElement.querySelectorAll(selector),
-  };
+    hidden: false,
+  });
   document.documentElement = new Node('html');
   document.body = new Node('body');
   document.documentElement.append(document.body);
@@ -254,6 +259,20 @@ export async function createApp({root = new URL('../../', import.meta.url), widt
   visualViewport.height = height;
   visualViewport.scale = 1;
   const window = new Node('window');
+  window.document = document;
+  const motion = new Node('media-query');
+  motion.matches = reducedMotion;
+  window.matchMedia = () => motion;
+  let now = 0, nextTimer = 0;
+  const timers = new Map();
+  window.performance = {now: () => now};
+  window.setTimeout = (callback, delay) => {
+    const id = ++nextTimer;
+    metrics.timersScheduled++;
+    timers.set(id, {callback, at: now + delay});
+    return id;
+  };
+  window.clearTimeout = id => timers.delete(id);
   if (viewport) window.visualViewport = visualViewport;
   window.getSelection = () => selection;
   let currentURL = new URL(`https://terminal.test/${hash}`);
@@ -347,6 +366,21 @@ export async function createApp({root = new URL('../../', import.meta.url), widt
       for (const callback of pending) callback(0);
     },
     get pendingFrames() { return frames.size; },
+    get pendingTimers() { return timers.size; },
+    advanceTime(milliseconds) {
+      const end = now + milliseconds;
+      for (;;) {
+        const next = [...timers].sort((a, b) => a[1].at - b[1].at)[0];
+        if (!next || next[1].at > end) break;
+        const [id, {at, callback}] = next;
+        now = at;
+        timers.delete(id);
+        callback();
+      }
+      now = end;
+    },
+    setReducedMotion(value) { motion.matches = value; dispatch(motion, 'change', {matches: value}); },
+    setHidden(value) { document.hidden = value; dispatch(document, 'visibilitychange'); },
     resize(newWidth, newHeight, scale = 1) {
       globals.innerWidth = newWidth;
       visualViewport.height = newHeight;

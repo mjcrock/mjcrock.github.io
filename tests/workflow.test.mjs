@@ -7,7 +7,7 @@ import {test} from 'node:test';
 
 const root = new URL('../', import.meta.url);
 const workflow = readFileSync(new URL('.github/workflows/pages.yml', root), 'utf8');
-const publicFiles = ['index.html', 'style.css', 'app.js', 'engine.js', 'routing.js', 'README.md'];
+const publicFiles = ['index.html', 'style.css', 'app.js', 'engine.js', 'routing.js', 'snake.js', 'README.md'];
 
 test('Pages workflow validates source before testing and restricts deployment to main', () => {
   assert.match(workflow, /branches: \[main\]/);

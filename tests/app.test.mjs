@@ -831,22 +831,97 @@ test('help shows commands and short examples without introductory or detailed ex
   ]) assert.equal(result.textContent.includes(removed), false);
 });
 
-test('the Python surprise uses bounded output and adds no timers, listeners or navigation', async () => {
+test('the Python surprise keeps one timer and bounded output without adding listeners or navigation', async () => {
   const app = await ready();
   const listeners = app.metrics.listeners;
   for (let index = 0; index < 60; index++) app.submit(index % 2 ? 'python3' : 'python');
   assert.equal(app.output.children.length, 40);
   assert.equal(app.metrics.listeners, listeners);
   assert.equal(app.pendingFrames, 0);
+  assert.equal(app.pendingTimers, 1);
   assert.equal(app.location.hash, '');
   assert.equal(app.document.activeElement, app.input);
   const snake = app.output.lastElementChild.querySelector('.snake');
   assert.equal(snake.getAttribute('role'), 'img');
-  assert.equal(snake.getAttribute('aria-label'), 'An ASCII python snake');
-  assert.match(snake.textContent, /o\\/);
+  assert.equal(snake.getAttribute('aria-label'), 'A coiled python flicks its tongue');
+  assert.deepEqual(snake.textContent.split('\n').map(line => line.length), Array(12).fill(34));
+  app.advanceTime(2960);
+  assert.equal(app.pendingTimers, 0);
+  assert.equal(app.terminal.classList.contains('snake-active'), false);
   app.submit('help');
   assert.doesNotMatch(app.output.lastElementChild.textContent, /python|snake/);
   app.change('py');
   app.key('Tab');
   assert.equal(app.suggestions.children.length, 0);
+});
+
+test('the snake returns the real prompt at 2560ms without moving input or changing history', async () => {
+  const app = await ready();
+  app.submit('python');
+  const history = structuredClone(app.history.entries);
+  const focusCalls = app.metrics.focusCalls.length;
+  const scrollWrites = app.metrics.scrollWrites;
+  assert.equal(app.terminal.classList.contains('snake-active'), true);
+  assert.equal(app.input.hidden, false);
+  assert.equal(app.input.disabled, false);
+  app.advanceTime(2559);
+  assert.equal(app.terminal.classList.contains('snake-active'), true);
+  app.advanceTime(1);
+  assert.equal(app.terminal.classList.contains('snake-active'), false);
+  assert.equal(app.pendingTimers, 1);
+  app.advanceTime(400);
+  assert.equal(app.pendingTimers, 0);
+  assert.equal(app.metrics.focusCalls.length, focusCalls);
+  assert.equal(app.metrics.scrollWrites, scrollWrites);
+  assert.deepEqual(app.history.entries, history);
+});
+
+test('typing, paste and composition finish the snake without losing the input draft', async () => {
+  for (const event of ['keydown', 'beforeinput', 'input', 'compositionstart']) {
+    const app = await ready();
+    app.submit('python3');
+    app.advanceTime(1040);
+    app.input.value = 'draft';
+    app.dispatch(app.input, event, {key: 'x', isComposing: event === 'compositionstart'});
+    assert.equal(app.input.value, 'draft');
+    assert.equal(app.document.activeElement, app.input);
+    assert.equal(app.terminal.classList.contains('snake-active'), false);
+    assert.equal(app.pendingTimers, 0);
+    const text = app.output.lastElementChild.textContent;
+    app.advanceTime(5000);
+    assert.equal(app.output.lastElementChild.textContent, text);
+  }
+});
+
+test('reduced motion, backgrounding and page exit settle an active snake', async () => {
+  for (const stop of [app => app.setReducedMotion(true), app => app.setHidden(true), app => app.dispatch(app.window, 'pagehide')]) {
+    const app = await ready();
+    app.submit('python');
+    stop(app);
+    assert.equal(app.pendingTimers, 0);
+    assert.equal(app.terminal.classList.contains('snake-active'), false);
+  }
+  const app = await createApp({reducedMotion: true});
+  app.submit('python');
+  assert.equal(app.pendingTimers, 0);
+  assert.equal(app.terminal.classList.contains('snake-active'), false);
+  assert.ok(app.output.lastElementChild.textContent.includes(')--<'));
+});
+
+test('clear, recovery, completion and navigation cancel pending snake work', async () => {
+  for (const act of [
+    app => app.submit('clear'),
+    app => app.click(app.document.getElementById('previous')),
+    app => app.click(app.document.getElementById('complete')),
+    app => app.navigateHash('#/README.md'),
+  ]) {
+    const app = await ready();
+    app.submit('python');
+    act(app);
+    assert.equal(app.pendingTimers, 0);
+    assert.equal(app.terminal.classList.contains('snake-active'), false);
+    const text = app.output.textContent;
+    app.advanceTime(5000);
+    assert.equal(app.output.textContent, text);
+  }
 });

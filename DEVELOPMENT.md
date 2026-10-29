@@ -44,6 +44,7 @@ node scripts/update-readme.mjs --check
 node --check app.js
 node --check engine.js
 node --check routing.js
+node --check snake.js
 node --check markdown.js
 node --test tests/*.test.mjs
 ```
@@ -72,15 +73,16 @@ screen-reader or phone verification.
 - `app.js`: rendering, input and navigation coordination.
 - `engine.js`: fixed filesystem, command actions and history.
 - `routing.js`: bounded, allowlisted document links and browser state.
+- `snake.js`: compact ASCII frames and the one-shot animation player.
 - `markdown.js`: build-only safe subset producing text/link data.
 - `README.md`: canonical authored Markdown, also directly readable as a file.
 - `scripts/update-readme.mjs`: build-only HTML renderer and source validation.
 - `scripts/serve.mjs`: local preview server shared by the browser checks.
 
-The browser loads five runtime assets: HTML, CSS and three JavaScript modules.
+The browser loads six runtime assets: HTML, CSS and four JavaScript modules.
 It does not request README.md to render content. The CSP disallows connections,
 inline scripts, objects, frames, workers, bases and form actions. Module preloads
-let browsers discover both imported modules alongside the entry script.
+let browsers discover the imported modules alongside the entry script.
 The application retains one detached copy of the generated README for subsequent
 views. Each view has independent DOM nodes. The inert JSON source is decoded
 only on the first `cat` and retained until reload. Publishing content replaces
@@ -112,10 +114,20 @@ Error hints contain clickable commands that fill and focus the input without
 running it. Help uses `[path]` for optional paths and `cat path` for its required
 file argument.
 
-The hidden `python` and `python3` aliases display a small ASCII snake. They never
-execute arguments and do not appear in help or completion. A short CSS transform
-animation ends automatically, adds no timer or event loop, and is disabled for
-reduced-motion preferences. It uses the existing output and history limits.
+The hidden `python` and `python3` aliases play a coiled ASCII snake blinking and
+flicking its tongue. They never execute arguments and do not appear in help or completion.
+The supplied artwork is stored compactly in `snake.js`, with the prop cursor
+removed and identical holds combined. Frames are displayed
+through `textContent` in one fixed 34-column × 12-line `<pre>`, with ligatures
+disabled. The sequence plays once for 2.96 seconds, restoring the normal prompt
+at 2.56 seconds. Reduced motion shows the supplied still and prompt immediately.
+Typing finishes the sequence immediately without losing input or focus.
+
+The player schedules at most one timeout for the next frame boundary. Elapsed
+time skips overdue frames instead of extending playback. It stops on navigation,
+hidden pages, and changes to reduced-motion preferences. No continuous animation-frame
+loop, image assets, JSON fetch, or extra runtime package is needed. Output and
+history use the existing limits.
 
 ## Content direction
 
@@ -140,13 +152,13 @@ needs to be added.
 
 Only pushes to `main` or manual runs on `main` deploy. The workflow uses pinned
 official actions, Node 24, read-only source access in the build, and Pages/OIDC
-permissions only in the deployment job. It publishes exactly six public files
+permissions only in the deployment job. It publishes exactly seven public files
 plus `.nojekyll`, not tests, scripts, this guide, hidden files, or the whole repo.
 For a future custom domain, configure it in Pages settings separately; this
 workflow targets the existing GitHub-provided domain.
 
 Only deployment writes `_site/`: it renders `index.html` there, copies the other
-five public files, and adds `.nojekyll`. The directory is ignored by Git and
+six public files, and adds `.nojekyll`. The directory is ignored by Git and
 must not be committed. Local preview and tests leave source files unchanged.
 
 Keep `.DS_Store`, `._*` and `__MACOSX/` out of Git. `noindex,nofollow` is not access
