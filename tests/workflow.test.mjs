@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import {readFileSync, mkdtempSync, cpSync, readdirSync, rmSync} from 'node:fs';
+import {readFileSync, mkdtempSync, cpSync, readdirSync, rmSync, writeFileSync, mkdirSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {execFileSync} from 'node:child_process';
@@ -36,6 +36,11 @@ test('deployment staging includes only the explicit public asset allowlist', () 
   const temporary = mkdtempSync(join(tmpdir(), 'pages-artifact-'));
   try {
     for (const file of publicFiles) cpSync(new URL(file, root), join(temporary, file));
+    for (const file of ['.DS_Store', '._README.md', 'DEVELOPMENT.md']) {
+      writeFileSync(join(temporary, file), 'Private local metadata: never publish.');
+    }
+    mkdirSync(join(temporary, '__MACOSX'));
+    writeFileSync(join(temporary, '__MACOSX/._README.md'), 'Private archive metadata.');
     // Exercise the exact workflow staging commands without exposing repository files.
     execFileSync('sh', ['-eu', '-c', `mkdir _site\ncp ${command} _site/\ntouch _site/.nojekyll`], {cwd: temporary});
     assert.deepEqual(readdirSync(join(temporary, '_site')).sort(), [...publicFiles, '.nojekyll'].sort());

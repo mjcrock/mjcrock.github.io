@@ -45,8 +45,9 @@ node --check markdown.js
 node --test tests/*.test.mjs
 ```
 
-The optional Python Playwright script is development tooling only. Deterministic
-DOM tests do not replace actual browser, screen-reader or phone verification.
+The optional Python Playwright script, `tests/browser-check.py`, is development
+tooling only. Deterministic DOM tests and desktop browser emulation do not replace
+actual screen-reader or phone verification.
 
 ## Files and boundaries
 
@@ -61,8 +62,11 @@ DOM tests do not replace actual browser, screen-reader or phone verification.
 
 The browser loads six runtime assets: HTML, CSS and four JavaScript modules.
 It does not request README.md to render content. The CSP disallows connections,
-inline scripts, objects, bases and form actions. Content lives with the module
-until reload; publishing edits means replacing the generated engine too.
+inline scripts, objects, frames, workers, bases and form actions. Module preloads
+let browsers discover the three imported modules alongside the entry script.
+Content lives with the module until reload; publishing edits means replacing the
+generated engine too. Formatted README data is parsed lazily once per page load;
+each output still has independent DOM nodes. Raw `cat` output is unchanged.
 
 No raw commands are saved to URLs or browser state. Only the fixed document path
 and validated root context are used for navigation. Typed history stays in
@@ -75,6 +79,10 @@ exits; arrows select, Enter accepts without running, and Escape preserves the
 draft. Unique completion has no visible success banner; choices and no-match
 feedback overlay the output above the stationary prompt. Without choices arrows
 recall history. Modified/IME keys remain untouched.
+Mobile sizing accounts for safe areas and the visual viewport, preserves layout
+during pinch zoom, and coalesces resize events into one animation frame. CSS
+provides the fallback when the visual viewport API is unavailable. Large default
+fonts, short landscape layouts, coarse pointers, and forced colors are supported.
 The owner masthead and visitor `guest` prompt are distinct. The normal hint is
 exactly “Type help for commands.” Help lists commands without a keyboard essay.
 
@@ -107,3 +115,5 @@ Do not commit `_site/`; it is generated staging output.
 Keep `.DS_Store`, `._*` and `__MACOSX/` out of Git. `noindex,nofollow` is not access
 control. GitHub Pages cannot set arbitrary response headers from these files;
 header-only protections such as CSP `frame-ancestors` need suitable hosting.
+The generator reads at most 65,537 README bytes before enforcing the 64 KiB
+limit, so rejected oversized authored files cannot require a full-file buffer.

@@ -104,7 +104,12 @@ test('approved identity, one short hint, and real canonical README replace place
   assert.doesNotMatch(app + html, /Interactive study|Interactive terminal|Generic placeholders|content placeholders/);
   assert.ok(existsSync(new URL('README.md', root)));
   assert.ok(existsSync(new URL('DEVELOPMENT.md', root)));
-  assert.ok(!existsSync(new URL('.DS_Store', root)));
+});
+
+test('local Finder and archive metadata is ignored without requiring a pristine working folder', () => {
+  const rules = new Set(read('.gitignore').split(/\r?\n/).map(line => line.trim()));
+  for (const pattern of ['.DS_Store', '._*', '__MACOSX/']) assert.ok(rules.has(pattern), pattern);
+  // Deployment exclusion is exercised independently by workflow.test.mjs.
 });
 
 

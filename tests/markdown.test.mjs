@@ -64,6 +64,27 @@ test('HTTPS links require no per-destination code changes', () => {
   }
 });
 
+test('encoded ASCII controls and backslashes remain literal for either hex case', () => {
+  const codes = [...Array.from({length: 32}, (_, index) => index), 0x5c, 0x7f];
+  for (const code of codes) {
+    const encoded = '%' + code.toString(16).padStart(2, '0');
+    for (const escape of [encoded, encoded.toUpperCase()]) {
+      const source = `[Profile](https://example.org/${escape}profile)`;
+      assert.deepEqual(links(markdownBlocks(source)), [], escape);
+      assert.equal(text(markdownBlocks(source)), source, escape);
+    }
+  }
+});
+
+test('a dense document within the 64 KiB source budget preserves every link in order', () => {
+  const expected = Array.from({length: 1000}, (_, index) => ({text: String(index), href: `https://example.org/${index}`}));
+  const source = expected.map(part => `[${part.text}](${part.href})`).join(' · ');
+  assert.ok(Buffer.byteLength(source) <= 65536);
+  const blocks = markdownBlocks(source);
+  assert.deepEqual(links(blocks), expected);
+  assert.equal(text(blocks), expected.map(part => part.text).join(' · '));
+});
+
 test('approved README copy renders both professional profile links', () => {
   const source = 'Mathematics, computing, and security.\n\n[GitHub](https://github.com/mjcrock) · [ORCID](https://orcid.org/0009-0005-2589-1596)\n';
   assert.equal(markdownBlocks(source)[0].parts[0].text, 'Mathematics, computing, and security.');
