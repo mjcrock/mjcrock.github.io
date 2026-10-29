@@ -77,6 +77,7 @@ screen-reader or phone verification.
 - `markdown.js`: build-only safe subset producing text/link data.
 - `README.md`: canonical authored Markdown, also directly readable as a file.
 - `scripts/update-readme.mjs`: build-only HTML renderer and source validation.
+- `scripts/build.mjs`: deployment staging with content-versioned asset URLs.
 - `scripts/serve.mjs`: local preview server shared by the browser checks.
 
 The browser loads six runtime assets: HTML, CSS and four JavaScript modules.
@@ -157,9 +158,19 @@ plus `.nojekyll`, not tests, scripts, this guide, hidden files, or the whole rep
 For a future custom domain, configure it in Pages settings separately; this
 workflow targets the existing GitHub-provided domain.
 
-Only deployment writes `_site/`: it renders `index.html` there, copies the other
-six public files, and adds `.nojekyll`. The directory is ignored by Git and
-must not be committed. Local preview and tests leave source files unchanged.
+The workflow runs `node scripts/build.mjs` to create a new `_site/` directory.
+It renders `index.html`, copies `README.md`, and adds `.nojekyll`. CSS and all
+four JavaScript modules get a shared content-hash query string in the generated
+HTML and module imports, including nested imports. Changing any runtime asset
+produces fresh URLs, avoiding reuse of cached code or styles when the updated
+page loads. Filenames stay stable so older cached HTML can still resolve its
+asset URLs after later deployments. This adds no browser code or requests.
+An already-open page still needs a reload, and Pages may cache the HTML itself.
+
+The asset version is computed during the build, never stored in source. The
+builder refuses an existing output directory rather than overwriting files.
+`_site/` is ignored by Git and must not be committed. Local preview and tests
+leave source files unchanged.
 
 Keep `.DS_Store`, `._*` and `__MACOSX/` out of Git. `noindex,nofollow` is not access
 control. GitHub Pages cannot set arbitrary response headers from these files;
