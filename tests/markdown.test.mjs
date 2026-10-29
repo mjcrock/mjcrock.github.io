@@ -37,25 +37,37 @@ test('multiple links retain all surrounding text and readable labels', () => {
   ]);
 });
 
-test('only the exact approved URL is linkable; normalization cannot broaden policy', () => {
+test('only valid absolute HTTPS destinations are linkable', () => {
   const destinations = [
-    'javascript:alert(1)', 'data:text/html,<script>alert(1)</script>', 'vbscript:x',
-    '//github.com/mjcrock', 'http://github.com/mjcrock', 'HTTPS://github.com/mjcrock',
-    'https://github.com/mjcrock/', 'https://github.com/mjcrock?x=1',
-    'https://github.com/mjcrock#fragment', 'https://github.com/mjcrock.evil.test',
-    'https://github.com@mjcrock.evil.test', 'https://evil.test/https://github.com/mjcrock',
-    'https://github.com/%6djcrock', 'https://github.com/mjcrock%0a',
-    'https://github.com/mjcrock\u0000', 'https://github.com/mjcrock\t',
-    'https://github.com/mjcrock\u202e', 'javascript&#58;alert(1)',
-    'java%73cript:alert(1)', 'https&#58;//github.com/mjcrock',
-    'https://github.com/other', '/README.md', '../README.md', '#/README.md',
+    'javascript:alert(1)', 'data:text/html,x', 'vbscript:x', '//example.com',
+    'http://example.com', 'https://', 'https:///example.com',
+    'https://@example.com', 'https://user@example.com', 'https://user:pass@example.com',
+    'https://example.com/\\path', 'https://example.com/%5cpath',
+    'https://example.com/%0a', 'https://example.com/\u0000',
+    'https://example.com/\t', 'https://example.com/\u202e',
+    'https://example.org/a_(b)', 'https://example.com/ space', ' https://example.com',
+    'javascript&#58;alert(1)', 'java%73cript:alert(1)',
+    'https&#58;//example.com', '/README.md', '../README.md', '#/README.md',
   ];
   for (const destination of destinations) {
     const source = `[label](${destination})`;
-    const blocks = markdownBlocks(source);
-    assert.deepEqual(links(blocks), [], destination);
-    assert.equal(text(blocks), source, destination);
+    assert.deepEqual(links(markdownBlocks(source)), [], destination);
+    assert.equal(text(markdownBlocks(source)), source, destination);
   }
+});
+
+test('HTTPS links require no per-destination code changes', () => {
+  for (const href of ['https://orcid.org/0009-0005-2589-1596',
+    'https://example.org/a?x=1&y=2#section', 'HTTPS://example.org/path',
+    'https://example.org/%20name', 'https://example.org/a_%28b%29']) {
+    assert.deepEqual(links(markdownBlocks(`[Profile](${href})`)), [{text: 'Profile', href}]);
+  }
+});
+
+test('approved README copy renders both professional profile links', () => {
+  const source = 'Mathematics, computing, and security.\n\n[GitHub](https://github.com/mjcrock) · [ORCID](https://orcid.org/0009-0005-2589-1596)\n';
+  assert.equal(markdownBlocks(source)[0].parts[0].text, 'Mathematics, computing, and security.');
+  assert.deepEqual(links(markdownBlocks(source)).map(link => link.text), ['GitHub', 'ORCID']);
 });
 
 test('raw HTML and event-handler-shaped labels remain text data', () => {

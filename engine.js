@@ -1,6 +1,6 @@
 // Pure command model. This is a fixed, read-only virtual filesystem, never a shell.
 // BEGIN GENERATED README — run node scripts/update-readme.mjs; do not edit here.
-export const README_SOURCE = "[GitHub](https://github.com/mjcrock)\n";
+export const README_SOURCE = "Mathematics, computing, and security.\n\n[GitHub](https://github.com/mjcrock) · [ORCID](https://orcid.org/0009-0005-2589-1596)\n";
 // END GENERATED README
 
 export const LIMITS = Object.freeze({input: 500, history: 50, output: 40});

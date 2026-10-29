@@ -1,6 +1,16 @@
-// Deliberately small authored subset: headings, paragraphs, and one approved link.
+// Deliberately small authored subset: headings, paragraphs, and absolute HTTPS links.
 // Output is data for text nodes/DOM construction, never HTML.
-const GITHUB_URL = 'https://github.com/mjcrock';
+// Validate before URL normalization can hide whitespace, credentials or slashes.
+function safeHTTPS(href) {
+  if (!/^https:\/\/[^/]/i.test(href)
+    || /[(\s\\\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u2028-\u202e\u2066-\u2069]/u.test(href)
+    || /^https:\/\/[^/?#]*@/i.test(href)
+    || /%(?:0[0-9a-f]|1[0-9a-f]|7f|5c)/i.test(href)) return false;
+  try {
+    const url = new URL(href);
+    return url.protocol === 'https:' && Boolean(url.hostname) && !url.username && !url.password;
+  } catch { return false; }
+}
 const UNSAFE_LABEL = /[\[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u2028-\u202e\u2066-\u2069]/u;
 
 function inlineParts(text) {
@@ -19,7 +29,7 @@ function inlineParts(text) {
     const href = text.slice(close + 2, end);
     // Consume unsupported syntax as text, including nested links and images.
     if (text[start - 1] !== '!' && text[start - 1] !== '\\'
-      && label.trim() && !UNSAFE_LABEL.test(label) && href === GITHUB_URL) {
+      && label.trim() && !UNSAFE_LABEL.test(label) && safeHTTPS(href)) {
       if (start > plainStart) parts.push({text: text.slice(plainStart, start)});
       parts.push({text: label, href});
       plainStart = end + 1;

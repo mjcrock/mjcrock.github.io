@@ -6,38 +6,34 @@ The virtual root lists only that real file; no empty categories are invented.
 
 ## Editing public content
 
-Edit `README.md`, then run:
+Edit `README.md`, commit, and push to `main`. The GitHub Pages workflow
+regenerates the embedded text, runs the tests, and deploys the static artifact.
+Do not manually edit `README_SOURCE` in `engine.js`. The workflow does not commit
+its generated changes back: a source checkout can therefore contain an older
+embedded README until generation runs. This is intentional.
 
-```sh
-node scripts/update-readme.mjs
-```
-
-This small, dependency-free authoring command updates the marked generated
-`README_SOURCE` constant in `engine.js`. Commit both files. Do not edit the
-constant by hand. The check below fails if source and generated content differ:
-
-```sh
-node scripts/update-readme.mjs --check
-```
-
-The shipped site needs no build, content fetch, or runtime packages. Generating
-the content before publication removes loading, timeout, and authentication
-states from startup. The tradeoff is this explicit authoring step after Markdown
-edits. Tests check the generated content against the actual README bytes.
+The site still needs no runtime packages or content fetch. Generation happens
+once during deployment, not in visitors' browsers. Failed tests prevent deployment.
 
 `cat README.md` prints that source exactly, including its final newline.
 `open README.md` formats the same source with a deliberately small subset:
-paragraphs, level 1–3 headings, and the exact approved GitHub link. Unsupported
+paragraphs, level 1–3 headings, and absolute HTTPS links. No destination whitelist
+needs updating. HTTP, relative URLs, credentials and unsafe URL characters are
+left as literal text. Percent-encode parentheses in link destinations as `%28`
+and `%29`; nested Markdown syntax is deliberately unsupported. Links are navigated only when clicked; nothing is fetched. Unsupported
 syntax and raw HTML remain literal text. No generic Markdown framework is used.
 The generator accepts valid UTF-8 up to 64 KiB and preserves BOM and line endings.
 
 ## Preview and checks
 
 ```sh
+node scripts/update-readme.mjs
 python3 -m http.server 8000 --bind 127.0.0.1
 ```
 
-Open `http://localhost:8000`. HTTP is required for JavaScript modules. Use Node.js
+Open `http://localhost:8000`. Regenerate after local README edits, then reload.
+This local-only preview step is not required for edits pushed to GitHub. HTTP is
+required for JavaScript modules. Use Node.js
 24 or another recent version supporting ES-module syntax detection for checks:
 
 ```sh
@@ -82,15 +78,32 @@ recall history. Modified/IME keys remain untouched.
 The owner masthead and visitor `guest` prompt are distinct. The normal hint is
 exactly “Type help for commands.” Help lists commands without a keyboard essay.
 
-## Replacing a previous draft
+## One-time GitHub Pages setup
 
-Copy all seven public files above (including `README.md`), `scripts/`, this guide,
-and the existing `.gitignore` to the draft branch. Include the supplied tests for
-future consistency checks. `markdown.js` is required; do not omit it. `README.md`
-contains public content; technical instructions live in `DEVELOPMENT.md`.
+1. In GitHub Desktop, select `mjcrock.github.io`, fetch/pull the latest `main`,
+   then create `setup/pages-automation` from `main` (Branch → New Branch).
+2. Copy the update files into the repository, preserving the directory paths.
+   The ZIP includes hidden `.github/workflows/pages.yml`; in Finder use
+   Command–Shift–period to show hidden files. Do not delete unrelated files.
+3. Review Changes, commit as `Automate README generation in Pages deployment`,
+   and publish the branch. Open a pull request, review it, and merge into `main`.
+4. On GitHub open Settings → Pages → Build and deployment → Source and select
+   **GitHub Actions**. No access token or secret needs to be added.
+5. Under Actions → Deploy site to GitHub Pages, run the workflow on `main`
+   if the merge-triggered run happened before the setting was ready. Wait for
+   both build and deploy to succeed, then check the live site.
 
-Preserve hosting infrastructure such as `.nojekyll`, `CNAME` and `.github/` if
-present. Do not track `.DS_Store`, `._*` or `__MACOSX/`. Do not change a live branch
-or Pages settings just to preview. `noindex,nofollow` is not access control.
-GitHub Pages does not set arbitrary response headers from these files; header-only
-protections such as CSP `frame-ancestors` need suitable hosting.
+Only pushes to `main` or manual runs on `main` deploy. The workflow uses pinned
+official actions, Node 24, read-only source access in the build, and Pages/OIDC
+permissions only in the deployment job. It publishes exactly seven public files
+plus `.nojekyll`, not tests, scripts, this guide, hidden files, or the whole repo.
+For a future custom domain, configure it in Pages settings separately; this
+workflow targets the existing GitHub-provided domain.
+
+A copied local `engine.js` is generated for the included README so the first
+preview works. Subsequent GitHub content edits need only change README.md.
+Do not commit `_site/`; it is generated staging output.
+
+Keep `.DS_Store`, `._*` and `__MACOSX/` out of Git. `noindex,nofollow` is not access
+control. GitHub Pages cannot set arbitrary response headers from these files;
+header-only protections such as CSP `frame-ancestors` need suitable hosting.

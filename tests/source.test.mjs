@@ -102,7 +102,7 @@ test('approved identity, one short hint, and real canonical README replace place
   assert.match(html, /id="keyboard-help">Type <button[^>]+>help<\/button> for commands\.<\/p>/);
   assert.doesNotMatch(html, /<footer|class="mode"|data-command="ls \/"|data-command="open \/writing\/sample"/);
   assert.doesNotMatch(app + html, /Interactive study|Interactive terminal|Generic placeholders|content placeholders/);
-  assert.equal(read('README.md'), '[GitHub](https://github.com/mjcrock)\n');
+  assert.ok(existsSync(new URL('README.md', root)));
   assert.ok(existsSync(new URL('DEVELOPMENT.md', root)));
   assert.ok(!existsSync(new URL('.DS_Store', root)));
 });

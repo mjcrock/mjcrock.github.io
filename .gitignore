@@ -2,3 +2,6 @@
 .DS_Store
 ._*
 __MACOSX/
+
+# Generated deployment staging
+_site/

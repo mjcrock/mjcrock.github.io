@@ -1,9 +1,12 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
 import {readFile} from 'node:fs/promises';
+import {markdownBlocks} from '../markdown.js';
 import {createApp} from './helpers/dom.mjs';
 
 const readme = await readFile(new URL('../README.md', import.meta.url), 'utf8');
+
+const renderedText = markdownBlocks(readme).flatMap(block => block.parts.map(part => part.text)).join('');
 
 // These deterministic DOM-model tests do not replace real-browser QA.
 const ready = async options => {
@@ -18,9 +21,9 @@ test('startup renders canonical README passively without fake commands, history,
   const app = await ready();
   assert.equal(app.output.children.length, 1);
   assert.equal(app.output.querySelector('.echo'), null);
-  const profile = app.output.querySelectorAll('a').find(node => node.href === 'https://github.com/mjcrock');
-  assert.ok(profile);
-  assert.equal(profile.textContent, 'GitHub');
+  assert.equal(app.output.firstElementChild.textContent, renderedText);
+  assert.deepEqual(app.output.querySelectorAll('a').map(node => ({text: node.textContent, href: node.href})),
+    markdownBlocks(readme).flatMap(block => block.parts.filter(part => 'href' in part)));
   assert.equal(app.document.activeElement, app.document.body);
   assert.equal(app.metrics.focusCalls.length, 0);
   assert.equal(app.suggestions.hidden, true);
@@ -66,7 +69,7 @@ test('delegated listing clicks on nested content focus the document, not the inp
   assert.equal(result.getAttribute('aria-label'), 'README.md');
   assert.equal(app.document.activeElement, result);
   assert.ok(app.metrics.focusCalls.every(call => call.node !== app.input));
-  assert.match(result.textContent, /GitHub/);
+  assert.ok(result.textContent.includes(renderedText));
   assert.equal(app.announcement.textContent, 'Opened README.md.');
   assert.equal(app.location.hash, '#/README.md');
 });
@@ -584,7 +587,7 @@ test('Back to the initial entry restores passive README without clearing command
   assert.equal(app.location.hash, '');
   assert.equal(app.output.children.length, 1);
   assert.equal(app.output.querySelector('.echo'), null);
-  assert.match(app.output.textContent, /GitHub/);
+  assert.ok(app.output.textContent.includes(renderedText));
   assert.equal(app.input.value, 'draft');
   assert.equal(app.document.activeElement, app.screen);
   app.history.forward();
@@ -703,7 +706,7 @@ test('compact mode follows the visual viewport without changing the draft or rea
 test('README and command controls are ready synchronously without network or timer APIs', async () => {
   // createApp awaits local test fixture imports, not application initialization.
   const app = await createApp();
-  assert.match(app.output.textContent, /GitHub/);
+  assert.ok(app.output.textContent.includes(renderedText));
   assert.equal(app.output.children.length, 1);
   assert.equal(app.output.querySelector('.loading'), null);
   assert.equal(app.output.querySelector('.error'), null);
