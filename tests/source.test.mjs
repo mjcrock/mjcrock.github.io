@@ -2,24 +2,33 @@ import assert from 'node:assert/strict';
 import {readFileSync, existsSync} from 'node:fs';
 import {test} from 'node:test';
 import {LIMITS} from '../engine.js';
+import {renderIndex} from '../scripts/update-readme.mjs';
 
 const root = new URL('../', import.meta.url);
 const read = name => readFileSync(new URL(name, root), 'utf8');
-const html = read('index.html');
+const html = await renderIndex();
 const app = read('app.js');
 const engine = read('engine.js');
 const routing = read('routing.js');
-const markdown = read('markdown.js');
 const css = read('style.css');
 
 test('all runtime resources are local and exist; legacy stylesheet is removed', () => {
-  for (const [, path] of html.matchAll(/(?:src|href)="([^"]+)"/g)) {
+  const resources = [...html.matchAll(/<(?:link|script)\b[^>]*>/g)].map(match => match[0]);
+  for (const [, path] of resources.join('\n').matchAll(/(?:src|href)="([^"]+)"/g)) {
     if (path.startsWith('data:image/svg+xml,')) continue;
     assert.match(path, /^[A-Za-z][A-Za-z.-]+$/);
     assert.ok(existsSync(new URL(path, root)), path);
   }
   assert.ok(!existsSync(new URL('assets/styles.css', root)));
   assert.ok(!/assets\/styles\.css/.test(html));
+  for (const [, href] of html.matchAll(/<a\b[^>]*href="([^"]+)"/g)) {
+    const url = new URL(href);
+    assert.equal(url.protocol, 'https:');
+    assert.equal(url.username, '');
+    assert.equal(url.password, '');
+  }
+  assert.doesNotMatch(app + engine + routing, /from ['"]\.\/markdown\.js['"]/);
+  assert.doesNotMatch(resources.join('\n'), /markdown\.js/);
 });
 
 test('CSP allows only same-origin loading and no inline/eval execution', () => {
@@ -33,12 +42,27 @@ test('CSP allows only same-origin loading and no inline/eval execution', () => {
     assert.deepEqual(directives.get(name), ["'none'"]);
   }
   assert.ok(html.indexOf('Content-Security-Policy') < html.indexOf('<link'));
-  assert.doesNotMatch(html, /\son\w+\s*=|<base\b|<iframe\b|\sstyle=/i);
+  const tags = [...html.matchAll(/<[^>]+>/g)].map(match => match[0]).join('\n');
+  assert.doesNotMatch(tags, /\son\w+\s*=|<base\b|<iframe\b|\sstyle=/i);
   assert.match(html, /name="referrer" content="no-referrer"/);
+  assert.match(html, /name="robots" content="noindex,nofollow"/);
+  const scripts = [...html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/g)];
+  assert.equal(scripts.length, 2, 'One module and one inert data block are expected.');
+  for (const [, attributes, body] of scripts) {
+    if (/type="application\/json"/.test(attributes)) {
+      assert.match(attributes, /id="readme-source"/);
+      assert.doesNotMatch(body, /</);
+      assert.equal(typeof JSON.parse(body), 'string');
+    } else {
+      assert.match(attributes, /type="module"/);
+      assert.match(attributes, /src="app\.js"/);
+      assert.equal(body.trim(), '');
+    }
+  }
 });
 
 test('rendering has no HTML execution, storage, or runtime fetch', () => {
-  const source = app + engine + routing + markdown;
+  const source = app + engine + routing;
   assert.doesNotMatch(source, /\.innerHTML|\.outerHTML|insertAdjacentHTML|document\.write|\beval\s*\(|new Function\b/);
   assert.doesNotMatch(source, /XMLHttpRequest|WebSocket|sendBeacon|localStorage|sessionStorage|document\.cookie/);
   assert.doesNotMatch(source, /\bfetch\s*\(|AbortController|setTimeout|readMarkdown/);
@@ -52,8 +76,9 @@ test('input limits, named regions, and mobile control labels are explicit', () =
   assert.match(html, /id="complete" aria-label="Complete command or path"/);
   assert.match(html, /id="completions"[^>]*role="listbox"/);
   assert.match(html, /role="status" aria-live="polite"/);
-  assert.doesNotMatch(html, /\sautofocus(?:\s|=|>)/);
-  const ids = [...html.matchAll(/\sid="([^"]+)"/g)].map(match => match[1]);
+  const tags = [...html.matchAll(/<[^>]+>/g)].map(match => match[0]).join('\n');
+  assert.doesNotMatch(tags, /\sautofocus(?:\s|=|>)/);
+  const ids = [...tags.matchAll(/\sid="([^"]+)"/g)].map(match => match[1]);
   assert.equal(new Set(ids).size, ids.length, 'Duplicate HTML IDs');
 });
 
@@ -85,7 +110,7 @@ test('focus pseudo-classes remain valid after stylesheet formatting', () => {
 
 
 test('runtime module imports resolve to local files, including the bounded router', () => {
-  for (const source of [app, engine, routing, markdown]) {
+  for (const source of [app, engine, routing]) {
     for (const [, path] of source.matchAll(/from ['"]([^'"]+)['"]/g)) {
       assert.match(path, /^\.\/[a-z-]+\.js$/);
       assert.ok(existsSync(new URL(path, root)), path);

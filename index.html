@@ -12,7 +12,6 @@
   <link rel="stylesheet" href="style.css">
   <link rel="modulepreload" href="engine.js">
   <link rel="modulepreload" href="routing.js">
-  <link rel="modulepreload" href="markdown.js">
   <script type="module" src="app.js"></script>
 </head>
 <body>
@@ -22,11 +21,11 @@
       <p class="site-status">Site in progress</p>
     </header>
     <div class="screen" id="screen" role="region" tabindex="0" aria-label="Terminal output, scroll to review previous commands">
-      <div id="output"></div>
-      <noscript>JavaScript is needed for the command interface. You can also read the <a class="document-link" href="README.md">README.md</a> directly.</noscript>
+<!-- BEGIN GENERATED README -->
+<!-- END GENERATED README -->
     </div>
     <div id="announcement" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
-    <section class="entry" aria-label="Command input">
+    <section class="entry" aria-label="Command input" hidden>
       <form id="command-form" autocomplete="off">
         <span class="prompt" id="prompt">guest:~ $</span>
         <input id="command" name="command" type="text" maxlength="500" aria-label="Terminal command" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="completions" aria-describedby="keyboard-help" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="send">

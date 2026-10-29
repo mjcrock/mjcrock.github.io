@@ -6,14 +6,16 @@ The virtual root lists only that real file; no empty categories are invented.
 
 ## Editing public content
 
-Edit `README.md`, commit, and push to `main`. The GitHub Pages workflow
-regenerates the embedded text, runs the tests, and deploys the static artifact.
-Do not manually edit `README_SOURCE` in `engine.js`. The workflow does not commit
-its generated changes back: a source checkout can therefore contain an older
-embedded README until generation runs. This is intentional.
+Edit `README.md`, commit, and push to `main`. The GitHub Pages workflow validates
+and tests the source, generates `_site/index.html`, and deploys the public files.
+The checked-in `index.html` is a template. Keep its marked README region empty:
+the build supplies the readable HTML and exact source data without changing
+tracked files. The title, identity metadata, and `noindex` setting are authored
+configuration in the template.
 
-The site still needs no runtime packages or content fetch. Generation happens
-once during deployment, not in visitors' browsers. Failed tests prevent deployment.
+The site needs no runtime packages or content fetch. The README and its links
+work without JavaScript. Command controls appear once their handlers are ready.
+Generation happens during deployment. Failed tests prevent deployment.
 
 `cat README.md` prints that source exactly, including its final newline.
 `open README.md` formats the same source with a deliberately small subset:
@@ -23,18 +25,19 @@ left as literal text. Percent-encode parentheses in link destinations as `%28`
 and `%29`; nested Markdown syntax is deliberately unsupported. Links are navigated only when clicked; nothing is fetched. Unsupported
 syntax and raw HTML remain literal text. No generic Markdown framework is used.
 The generator accepts valid UTF-8 up to 64 KiB and preserves BOM and line endings.
+Formatted text follows normal HTML parsing, including replacement of NUL with
+U+FFFD. The original source used by `cat` remains exact.
 
 ## Preview and checks
 
 ```sh
-node scripts/update-readme.mjs
-python3 -m http.server 8000 --bind 127.0.0.1
+node scripts/serve.mjs
 ```
 
-Open `http://localhost:8000`. Regenerate after local README edits, then reload.
-This local-only preview step is not required for edits pushed to GitHub. HTTP is
-required for JavaScript modules. Use Node.js
-24 or another recent version supporting ES-module syntax detection for checks:
+Open `http://localhost:8000`. Reload after README edits. The preview renders the
+page in memory on each request and creates no build files. HTTP is required for
+JavaScript modules. Use Node.js 24 or another recent version supporting
+ES-module syntax detection for checks:
 
 ```sh
 node scripts/update-readme.mjs --check
@@ -45,28 +48,48 @@ node --check markdown.js
 node --test tests/*.test.mjs
 ```
 
-The optional Python Playwright script, `tests/browser-check.py`, is development
-tooling only. Deterministic DOM tests and desktop browser emulation do not replace
-actual screen-reader or phone verification.
+`--check` validates the README and empty template without writing files. Running
+`node scripts/update-readme.mjs` without arguments prints the generated HTML to
+standard output. Tests render in memory or use temporary directories outside
+the repository.
+
+The preview server binds only to loopback and serves the same public-file
+allowlist as deployment. The server test needs permission to open a local port.
+The optional browser check uses a separately installed Node Playwright package:
+
+```sh
+PLAYWRIGHT_MODULE=/path/to/playwright/index.mjs node tests/browser-check.mjs chromium webkit
+```
+
+Browser tooling and binaries are development dependencies, never deployed.
+Deterministic DOM tests and desktop browser emulation do not replace actual
+screen-reader or phone verification.
 
 ## Files and boundaries
 
-- `index.html`: static masthead, input controls, accessibility and CSP.
+- `index.html`: authored template, controls, metadata, accessibility and CSP.
 - `style.css`: palette, responsive layout, focus and completion styles.
 - `app.js`: rendering, input and navigation coordination.
-- `engine.js`: fixed filesystem, generated README text, commands and history.
+- `engine.js`: fixed filesystem, command actions and history.
 - `routing.js`: bounded, allowlisted document links and browser state.
-- `markdown.js`: safe subset producing text/link data, never HTML strings.
+- `markdown.js`: build-only safe subset producing text/link data.
 - `README.md`: canonical authored Markdown, also directly readable as a file.
-- `scripts/update-readme.mjs`: development-only generation and consistency check.
+- `scripts/update-readme.mjs`: build-only HTML renderer and source validation.
+- `scripts/serve.mjs`: local preview server shared by the browser checks.
 
-The browser loads six runtime assets: HTML, CSS and four JavaScript modules.
+The browser loads five runtime assets: HTML, CSS and three JavaScript modules.
 It does not request README.md to render content. The CSP disallows connections,
 inline scripts, objects, frames, workers, bases and form actions. Module preloads
-let browsers discover the three imported modules alongside the entry script.
-Content lives with the module until reload; publishing edits means replacing the
-generated engine too. Formatted README data is parsed lazily once per page load;
-each output still has independent DOM nodes. Raw `cat` output is unchanged.
+let browsers discover both imported modules alongside the entry script.
+The application retains one detached copy of the generated README for subsequent
+views. Each view has independent DOM nodes. The inert JSON source is decoded
+only on the first `cat` and retained until reload. Publishing content replaces
+the generated HTML. No Markdown parser runs in the browser.
+
+Keeping rendered content and exact source in one response avoids a request when
+`cat` runs. It duplicates some content bytes, which matters for long READMEs on
+uncompressed or gzip-only hosting. Keep this front door brief. Future articles
+should have their own pages rather than accumulating in the homepage payload.
 
 No raw commands are saved to URLs or browser state. Only the fixed document path
 and validated root context are used for navigation. Typed history stays in
@@ -85,32 +108,46 @@ provides the fallback when the visual viewport API is unavailable. Large default
 fonts, short landscape layouts, coarse pointers, and forced colors are supported.
 The owner masthead and visitor `guest` prompt are distinct. The normal hint is
 exactly “Type help for commands.” Help lists commands without a keyboard essay.
+Error hints contain clickable commands that fill and focus the input without
+running it. Help uses `[path]` for optional paths and `cat path` for its required
+file argument.
 
-## One-time GitHub Pages setup
+The hidden `python` and `python3` aliases display a small ASCII snake. They never
+execute arguments and do not appear in help or completion. A short CSS transform
+animation ends automatically, adds no timer or event loop, and is disabled for
+reduced-motion preferences. It uses the existing output and history limits.
 
-1. In GitHub Desktop, select `mjcrock.github.io`, fetch/pull the latest `main`,
-   then create `setup/pages-automation` from `main` (Branch → New Branch).
-2. Copy the update files into the repository, preserving the directory paths.
-   The ZIP includes hidden `.github/workflows/pages.yml`; in Finder use
-   Command–Shift–period to show hidden files. Do not delete unrelated files.
-3. Review Changes, commit as `Automate README generation in Pages deployment`,
-   and publish the branch. Open a pull request, review it, and merge into `main`.
-4. On GitHub open Settings → Pages → Build and deployment → Source and select
-   **GitHub Actions**. No access token or secret needs to be added.
-5. Under Actions → Deploy site to GitHub Pages, run the workflow on `main`
-   if the merge-triggered run happened before the setting was ready. Wait for
-   both build and deploy to succeed, then check the live site.
+## Content direction
+
+Keep `README.md` as the introduction, identity links, and selected work. Add real
+content under `writing/` and `projects/` when ready. Generate normal HTML document
+URLs with direct links for those sections, keeping the terminal as another way
+to browse. Do not use command fragments as the only public article URLs.
+
+A contact link belongs with the README identity links. A public, current CV or
+résumé can sit beside it, preferably with a readable HTML version and optional
+PDF download. No contact form or empty sections are needed. Keep `noindex,nofollow`
+until publication is ready. Then add per-page titles, descriptions, canonical
+URLs, and a sitemap alongside the real pages.
+
+## GitHub Pages deployment
+
+In the repository's **Settings → Pages → Build and deployment**, select
+**GitHub Actions** as the source. Push the changes to `main`, or run
+**Deploy site to GitHub Pages** manually on `main`. Wait for both build and
+deploy to succeed before checking the live site. No access token or secret
+needs to be added.
 
 Only pushes to `main` or manual runs on `main` deploy. The workflow uses pinned
 official actions, Node 24, read-only source access in the build, and Pages/OIDC
-permissions only in the deployment job. It publishes exactly seven public files
+permissions only in the deployment job. It publishes exactly six public files
 plus `.nojekyll`, not tests, scripts, this guide, hidden files, or the whole repo.
 For a future custom domain, configure it in Pages settings separately; this
 workflow targets the existing GitHub-provided domain.
 
-A copied local `engine.js` is generated for the included README so the first
-preview works. Subsequent GitHub content edits need only change README.md.
-Do not commit `_site/`; it is generated staging output.
+Only deployment writes `_site/`: it renders `index.html` there, copies the other
+five public files, and adds `.nojekyll`. The directory is ignored by Git and
+must not be committed. Local preview and tests leave source files unchanged.
 
 Keep `.DS_Store`, `._*` and `__MACOSX/` out of Git. `noindex,nofollow` is not access
 control. GitHub Pages cannot set arbitrary response headers from these files;

@@ -550,7 +550,39 @@ test('clicking the prompt row focuses input but never steals text selection or o
   assert.equal(app.document.activeElement, app.input);
 });
 
-test('contextual error buttons fill safe recovery commands without running them', async () => {
+test('commands in error hints fill the input without running or duplicating the hint', async () => {
+  for (const [command, hint, suggestions] of [
+    ['bash', 'Type help to see available commands.', ['help']],
+    ['cs', 'Did you mean ls or cd?', ['ls', 'cd']],
+    ['cat /', 'Use open / to browse or ls / to list its contents.', ['open /', 'ls /']],
+    ['cd README.md', 'Use open /README.md or cat /README.md to read this file.', ['open /README.md', 'cat /README.md']],
+    ['help extra', 'help does not take arguments.', ['help']],
+  ]) {
+    const app = await ready();
+    app.submit(command);
+    const result = app.output.lastElementChild.querySelector('.result');
+    assert.equal(result.querySelectorAll('p').length, 2);
+    const line = result.querySelector('.dim');
+    assert.equal(line.textContent, hint);
+    assert.deepEqual(line.querySelectorAll('button').map(node => node.textContent), suggestions);
+    assert.equal(result.querySelector('.recovery'), null);
+    assert.doesNotMatch(result.textContent, /Fill input:/);
+    const count = app.output.children.length;
+    for (const button of line.querySelectorAll('button')) {
+      assert.equal(button.type, 'button');
+      assert.equal(button.getAttribute('aria-label'), `Fill command line with ${button.textContent}`);
+      app.click(button);
+      assert.equal(app.input.value, button.textContent);
+      assert.equal(app.document.activeElement, app.input);
+      assert.equal(app.output.children.length, count);
+      assert.equal(app.location.hash, '');
+    }
+    app.submit('history');
+    assert.deepEqual(app.output.lastElementChild.querySelectorAll('button').map(node => node.textContent), [command, 'history']);
+  }
+});
+
+test('nested error hint clicks and corrections retain fill-only behavior', async () => {
   const app = await ready();
   app.submit('cat /');
   const error = app.output.lastElementChild;
@@ -780,19 +812,41 @@ test('README and command controls are ready synchronously without network or tim
   assert.equal(app.output.lastElementChild.querySelector('pre').textContent, readme);
 });
 
-test('help retains commands and short examples without the three explanatory paragraphs', async () => {
+test('help shows commands and short examples without introductory or detailed explanations', async () => {
   const app = await ready();
   app.submit('help');
   const result = app.output.lastElementChild.querySelector('.result');
   assert.deepEqual(result.querySelectorAll('p').map(node => node.textContent), [
-    'A small, read-only interface. Not a remote shell.',
     'Try cat README.md or open README.md.',
   ]);
   assert.equal(result.querySelectorAll('dt').length, 8);
+  assert.ok(result.querySelectorAll('dt').some(node => node.textContent === 'cat path'));
+  assert.ok(result.querySelectorAll('dd').every(node => !node.textContent.includes(';')));
   assert.deepEqual(result.querySelectorAll('button').map(node => node.dataset.command), ['cat README.md', 'open README.md']);
   for (const removed of [
+    'A small, read-only interface. Not a remote shell.',
     'Tab completes once; Tab again or Shift+Tab leaves the input. With choices open, ↑ / ↓ selects and Enter accepts without running. Escape dismisses choices and keeps your draft.',
     'Without choices, ↑ / ↓ recalls history. Browser shortcuts remain yours. No flags, pipes, or multiple files.',
     'README.md is the site’s real Markdown file. cat prints its source; open formats it. Document links and Back / Forward never replay typed commands.',
   ]) assert.equal(result.textContent.includes(removed), false);
+});
+
+test('the Python surprise uses bounded output and adds no timers, listeners or navigation', async () => {
+  const app = await ready();
+  const listeners = app.metrics.listeners;
+  for (let index = 0; index < 60; index++) app.submit(index % 2 ? 'python3' : 'python');
+  assert.equal(app.output.children.length, 40);
+  assert.equal(app.metrics.listeners, listeners);
+  assert.equal(app.pendingFrames, 0);
+  assert.equal(app.location.hash, '');
+  assert.equal(app.document.activeElement, app.input);
+  const snake = app.output.lastElementChild.querySelector('.snake');
+  assert.equal(snake.getAttribute('role'), 'img');
+  assert.equal(snake.getAttribute('aria-label'), 'An ASCII python snake');
+  assert.match(snake.textContent, /o\\/);
+  app.submit('help');
+  assert.doesNotMatch(app.output.lastElementChild.textContent, /python|snake/);
+  app.change('py');
+  app.key('Tab');
+  assert.equal(app.suggestions.children.length, 0);
 });
