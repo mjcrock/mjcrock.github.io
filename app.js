@@ -19,6 +19,9 @@ let selectedChoice = -1;
 let completionAttempted = false;
 let lastNavigation = '';
 let composing = false;
+// One immutable authored document per page load. Keep only its parsed data;
+// each result still owns fresh DOM nodes. Reload invalidates this lazy cache.
+let readmeBlocks;
 
 function element(tag, text, className) {
   const node = document.createElement(tag);
@@ -59,8 +62,9 @@ function commandButton(command, label = command) {
   return button;
 }
 
-function renderMarkdown(parent, source) {
-  for (const block of markdownBlocks(source)) {
+function renderReadme(parent) {
+  readmeBlocks ??= markdownBlocks(README_SOURCE);
+  for (const block of readmeBlocks) {
     const node = element(block.tag);
     for (const part of block.parts) {
       if (part.href) {
@@ -76,7 +80,7 @@ function renderMarkdown(parent, source) {
 function initialDocument() {
   const document = element('section', undefined, 'initial-document');
   document.setAttribute('aria-label', 'README.md');
-  renderMarkdown(document, README_SOURCE);
+  renderReadme(document);
   output.append(document);
 }
 
@@ -111,7 +115,7 @@ function renderResult(parent, result) {
     link.href = documentHash(result.path);
     path.append(' · ', link);
     parent.append(path, element('h2', result.entry.title, 'file-title'));
-    renderMarkdown(parent, result.source);
+    renderReadme(parent);
   } else if (result.kind === 'cat') {
     parent.append(element('pre', result.source, 'file-text'));
   } else if (result.kind === 'history') {
@@ -293,7 +297,8 @@ input.addEventListener('input', () => { completionAttempted = false; hideSuggest
 input.addEventListener('compositionstart', () => { composing = true; });
 input.addEventListener('compositionend', () => { composing = false; });
 input.addEventListener('keydown', event => {
-  if (event.isComposing || event.ctrlKey || event.metaKey || event.altKey) return;
+  // Some IMEs report the conversion key before/after isComposing is updated.
+  if (composing || event.isComposing || event.keyCode === 229 || event.ctrlKey || event.metaKey || event.altKey) return;
   if (event.shiftKey) {
     if (event.key === 'Tab') hideSuggestions();
     return;
@@ -375,9 +380,15 @@ if (window.visualViewport) {
     pending = true;
     requestAnimationFrame(() => {
       pending = false;
+      // Pinch zoom shrinks the visual viewport too. Preserve the layout so
+      // magnification never masquerades as a keyboard opening or loses text.
+      if (visualViewport.scale && visualViewport.scale !== 1) return;
       terminal.classList.toggle('compact', innerWidth <= 600 && visualViewport.height <= 420);
-      const height = innerWidth <= 600 ? `${Math.max(180, visualViewport.height - 16)}px` : '';
-      if (terminal.style.height !== height) terminal.style.height = height;
+      const height = innerWidth <= 600 ? `${visualViewport.height}px` : '';
+      if (terminal.style.getPropertyValue('--viewport-height') !== height) {
+        if (height) terminal.style.setProperty('--viewport-height', height);
+        else terminal.style.removeProperty('--viewport-height');
+      }
     });
   };
   visualViewport.addEventListener('resize', fit);

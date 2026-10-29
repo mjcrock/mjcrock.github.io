@@ -390,14 +390,14 @@ test('a command after clear reveals its own result immediately without deferred 
 
 test('resize notifications coalesce and identical dimensions avoid height writes', async () => {
   const app = await ready();
-  assert.equal(app.terminal.style.height, '');
+  assert.equal(app.terminal.style.getPropertyValue('--viewport-height'), '');
   app.screen.scrollTop = 123;
   app.resetMetrics();
   for (let index = 0; index < 50; index++) app.resize(500, 700);
   assert.equal(app.pendingFrames, 1);
   assert.equal(app.metrics.heightWrites, 0);
   app.flushFrame();
-  assert.equal(app.terminal.style.height, '684px');
+  assert.equal(app.terminal.style.getPropertyValue('--viewport-height'), '700px');
   assert.equal(app.metrics.heightWrites, 1);
   app.resize(500, 700);
   app.flushFrame();
@@ -407,19 +407,75 @@ test('resize notifications coalesce and identical dimensions avoid height writes
   assert.equal(app.metrics.geometryReads, 0);
   app.resize(1000, 800);
   app.flushFrame();
-  assert.equal(app.terminal.style.height, '');
+  assert.equal(app.terminal.style.getPropertyValue('--viewport-height'), '');
   assert.equal(app.metrics.heightWrites, 2);
 });
 
-test('short mobile viewports enforce the minimum height; missing visualViewport is supported', async () => {
+test('viewport size passes to CSS for safe-area sizing; missing visualViewport is supported', async () => {
   const mobile = await ready({width: 320, height: 100});
-  assert.equal(mobile.terminal.style.height, '180px');
+  assert.equal(mobile.terminal.style.getPropertyValue('--viewport-height'), '100px');
   const fallback = await ready({viewport: false});
   assert.equal(fallback.pendingFrames, 0);
-  assert.equal(fallback.terminal.style.height, '');
+  assert.equal(fallback.terminal.style.getPropertyValue('--viewport-height'), '');
   fallback.submit('pwd');
   fallback.flushFrame();
   assert.equal(fallback.metrics.geometryReads, 2);
+});
+
+test('pinch zoom preserves layout, draft and reader position; keyboard sizing resumes at normal scale', async () => {
+  const app = await ready({width: 390, height: 650});
+  app.change('unfinished');
+  app.screen.scrollTop = 79;
+  app.resetMetrics();
+  for (const scale of [1.5, 2, 3]) {
+    app.resize(390, 650 / scale, scale);
+    app.flushFrame();
+    assert.equal(app.terminal.style.getPropertyValue('--viewport-height'), '650px');
+    assert.equal(app.terminal.classList.contains('compact'), false);
+    assert.equal(app.input.value, 'unfinished');
+    assert.equal(app.screen.scrollTop, 79);
+  }
+  assert.equal(app.metrics.heightWrites, 0);
+  app.resize(390, 300);
+  app.flushFrame();
+  assert.equal(app.terminal.style.getPropertyValue('--viewport-height'), '300px');
+  assert.equal(app.terminal.classList.contains('compact'), true);
+});
+
+test('IME conversion keys preserve the draft even when isComposing is false', async () => {
+  const app = await ready();
+  app.submit('pwd');
+  app.change('h');
+  app.key('Tab');
+  const selection = app.input.getAttribute('aria-activedescendant');
+  app.dispatch(app.input, 'compositionstart');
+  for (const key of ['ArrowUp', 'ArrowDown', 'Enter', 'Escape', 'Tab']) {
+    assert.equal(app.key(key, {isComposing: false}).defaultPrevented, false);
+    assert.equal(app.input.value, 'h');
+    assert.equal(app.input.getAttribute('aria-activedescendant'), selection);
+  }
+  app.dispatch(app.input, 'compositionend');
+  assert.equal(app.key('Enter', {keyCode: 229}).defaultPrevented, false);
+  assert.equal(app.input.value, 'h');
+  assert.equal(app.key('Enter').defaultPrevented, true);
+  assert.equal(app.input.value, 'help');
+});
+
+test('repeated README views own independent nodes and retain exact raw cat after clear and navigation', async () => {
+  const app = await ready();
+  const first = app.output.firstElementChild;
+  const text = first.textContent;
+  app.submit('open README.md');
+  const firstLink = first.querySelector('a');
+  const nextLink = app.output.lastElementChild.querySelectorAll('a').find(link => link.href === firstLink.href);
+  assert.ok(nextLink);
+  assert.notEqual(firstLink, nextLink);
+  first.textContent = 'reader-local mutation';
+  app.submit('clear');
+  app.navigateHash('');
+  assert.equal(app.output.firstElementChild.textContent, text);
+  app.submit('cat README.md');
+  assert.equal(app.output.lastElementChild.querySelector('pre').textContent, readme);
 });
 
 test('read-output control changes focus without changing command or screen history', async () => {

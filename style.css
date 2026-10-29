@@ -12,7 +12,7 @@
   --focus: #c0ddf1;
   --error: #efb8ad;
   font-family: ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;
-  font-size: 16px;
+  font-size: 100%;
   background: var(--canvas);
   color: var(--ink);
 }
@@ -22,12 +22,17 @@
 }
 
 body {
+  --page-inset-top: max(clamp(16px,4vw,64px), env(safe-area-inset-top, 0px));
+  --page-inset-right: max(clamp(16px,4vw,64px), env(safe-area-inset-right, 0px));
+  --page-inset-bottom: max(clamp(16px,4vw,64px), env(safe-area-inset-bottom, 0px));
+  --page-inset-left: max(clamp(16px,4vw,64px), env(safe-area-inset-left, 0px));
   margin: 0;
   min-height: 100vh;
   min-height: 100svh;
   display: grid;
   place-items: center;
   padding: clamp(16px,4vw,64px);
+  padding: var(--page-inset-top) var(--page-inset-right) var(--page-inset-bottom) var(--page-inset-left);
   background: radial-gradient(ellipse at 55% 0%,#39303f55,transparent 70%),var(--canvas);
 }
 
@@ -62,7 +67,7 @@ button {
 }
 
 .bar {
-  height: 96px;
+  min-height: 96px;
   flex: none;
   display: flex;
   flex-direction: column;
@@ -70,7 +75,7 @@ button {
   justify-content: center;
   gap: 5px;
   border-bottom: 1px solid var(--line);
-  padding: 0 28px;
+  padding: 14px 28px;
 }
 
 .screen {
@@ -214,6 +219,7 @@ input {
   outline-offset: 2px;
   caret-color: var(--rose);
   font-size: 16px;
+  font-size: max(16px, 1rem);
 }
 
 form:focus-within {
@@ -242,6 +248,7 @@ form {
 
 .toolbar {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 14px;
@@ -252,6 +259,7 @@ form {
   display: flex;
   align-items: center;
   gap: 4px;
+  margin-left: auto;
 }
 
 .toolbar button {
@@ -319,7 +327,7 @@ form {
 }
 
 noscript {
-  padding: 24px;
+  line-height: 1.7;
   max-width: 700px;
 }
 
@@ -330,7 +338,10 @@ noscript {
 
 @media(max-width:600px) {
   body {
-    padding: 8px;
+    --page-inset-top: max(8px, env(safe-area-inset-top, 0px));
+    --page-inset-right: max(8px, env(safe-area-inset-right, 0px));
+    --page-inset-bottom: max(8px, env(safe-area-inset-bottom, 0px));
+    --page-inset-left: max(8px, env(safe-area-inset-left, 0px));
     min-height: 100vh;
     min-height: 100dvh;
     display: block;
@@ -338,13 +349,14 @@ noscript {
   .terminal {
     height: calc(100vh - 16px);
     height: calc(100dvh - 16px);
+    height: calc(var(--viewport-height, 100dvh) - var(--page-inset-top) - var(--page-inset-bottom));
     min-height: 180px;
     width: 100%;
     box-shadow: none;
   }
   .bar {
-    height: 84px;
-    padding: 0 16px;
+    min-height: 84px;
+    padding: 12px 16px;
     font-size: .76rem;
   }
   .screen {
@@ -404,7 +416,7 @@ noscript {
     padding: 5px;
   }
   .keys button {
-    min-width: 40px;
+    min-width: 44px;
   }
   .screen {
     padding-left: 12px;
@@ -451,15 +463,26 @@ noscript {
 
 @media(max-height:420px) and (min-width:601px) {
   body {
-    padding: 12px;
+    --page-inset-top: max(12px, env(safe-area-inset-top, 0px));
+    --page-inset-right: max(12px, env(safe-area-inset-right, 0px));
+    --page-inset-bottom: max(12px, env(safe-area-inset-bottom, 0px));
+    --page-inset-left: max(12px, env(safe-area-inset-left, 0px));
   }
   .terminal {
-    height: auto;
-    min-height: 0;
+    height: calc(100vh - var(--page-inset-top) - var(--page-inset-bottom));
+    height: calc(100dvh - var(--page-inset-top) - var(--page-inset-bottom));
+    min-height: 180px;
+  }
+  .bar {
+    min-height: 64px;
+    padding-block: 8px;
   }
   .screen {
-    min-height: 140px;
-    max-height: 55vh;
+    min-height: 0;
+    padding-block: 12px;
+  }
+  .terminal .site-name {
+    font-size: 1.2rem;
   }
 }
 
@@ -526,14 +549,14 @@ noscript {
 /* Keep the input and actions usable when a mobile keyboard leaves little height. */
 @media(max-height:420px) and (max-width:600px) {
   .terminal {
-    min-height: 260px;
+    min-height: max(180px, 11.25rem);
   }
   .bar {
-    height: 64px;
+    min-height: 56px;
+    padding-block: 4px;
   }
   .screen {
-    padding-top: 12px;
-    padding-bottom: 10px;
+    padding-block: 4px;
   }
   .completion-panel {
     max-height: 84px;
@@ -549,14 +572,14 @@ noscript {
 
 /* Some keyboards shrink only visualViewport; fit() applies this same compact mode. */
 .terminal.compact {
-  min-height: 260px;
+  min-height: max(180px, 11.25rem);
 }
 .terminal.compact .bar {
-  height: 64px;
+  min-height: 56px;
+  padding-block: 4px;
 }
 .terminal.compact .screen {
-  padding-top: 12px;
-  padding-bottom: 10px;
+  padding-block: 4px;
 }
 .terminal.compact .completion-panel {
   max-height: 84px;
@@ -596,6 +619,7 @@ noscript {
 .initial-document {
   font-size: .95rem;
   line-height: 1.7;
+  overflow-wrap: anywhere;
 }
 
 .initial-document p {
@@ -617,4 +641,25 @@ noscript {
   padding: 0;
   font: inherit;
   border-radius: 0;
+}
+
+/* Tablets can use the wide layout while still needing generous touch targets. */
+@media(pointer:coarse) {
+  .run,.keys button,.completions button {
+    min-width: 44px;
+    min-height: 44px;
+  }
+  .history-list button,.listing-row button {
+    min-height: 44px;
+  }
+}
+
+/* Preserve a visible selected option in Windows and other forced-color themes. */
+@media(forced-colors:active) {
+  .completions button[aria-selected="true"] {
+    color: HighlightText;
+    background: Highlight;
+    border-color: Highlight;
+    outline-color: Highlight;
+  }
 }

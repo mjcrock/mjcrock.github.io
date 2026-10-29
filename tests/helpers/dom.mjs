@@ -49,7 +49,20 @@ export async function createApp({root = new URL('../../', import.meta.url), widt
       this._text = text;
       this._scrollTop = 0;
       this._offsetTop = ++serial * 10;
-      this.style = new Proxy({}, {
+      const properties = new Map();
+      this.style = new Proxy({
+        getPropertyValue: name => properties.get(name) ?? '',
+        setProperty(name, value) {
+          if (name === '--viewport-height') metrics.heightWrites++;
+          properties.set(name, value);
+        },
+        removeProperty(name) {
+          if (name === '--viewport-height') metrics.heightWrites++;
+          const previous = properties.get(name) ?? '';
+          properties.delete(name);
+          return previous;
+        },
+      }, {
         get: (target, key) => target[key] ?? '',
         set: (target, key, value) => {
           if (key === 'height') metrics.heightWrites++;
@@ -205,6 +218,7 @@ export async function createApp({root = new URL('../../', import.meta.url), widt
   make('button', 'read-output', entry);
   const visualViewport = new Node('viewport');
   visualViewport.height = height;
+  visualViewport.scale = 1;
   const window = new Node('window');
   if (viewport) window.visualViewport = visualViewport;
   window.getSelection = () => selection;
@@ -299,9 +313,10 @@ export async function createApp({root = new URL('../../', import.meta.url), widt
       for (const callback of pending) callback(0);
     },
     get pendingFrames() { return frames.size; },
-    resize(newWidth, newHeight) {
+    resize(newWidth, newHeight, scale = 1) {
       globals.innerWidth = newWidth;
       visualViewport.height = newHeight;
+      visualViewport.scale = scale;
       dispatch(visualViewport, 'resize');
       dispatch(window, 'resize');
     },

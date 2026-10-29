@@ -3,13 +3,16 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'none'; object-src 'none'; frame-src 'none'; worker-src 'none'; base-uri 'none'; form-action 'none'">
   <meta name="referrer" content="no-referrer">
   <meta name="robots" content="noindex,nofollow">
   <meta name="description" content="Michael J. Crockett's personal website.">
   <title>Michael J. Crockett</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%232c2533'/%3E%3Cpath d='m17 20 12 12-12 12m18 0h13' fill='none' stroke='%239dc9e8' stroke-width='5'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="style.css">
+  <link rel="modulepreload" href="engine.js">
+  <link rel="modulepreload" href="routing.js">
+  <link rel="modulepreload" href="markdown.js">
   <script type="module" src="app.js"></script>
 </head>
 <body>
@@ -20,6 +23,7 @@
     </header>
     <div class="screen" id="screen" role="region" tabindex="0" aria-label="Terminal output, scroll to review previous commands">
       <div id="output"></div>
+      <noscript>JavaScript is needed for the command interface. You can also read the <a class="document-link" href="README.md">README.md</a> directly.</noscript>
     </div>
     <div id="announcement" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
     <section class="entry" aria-label="Command input">
@@ -43,6 +47,5 @@
       <button type="button" id="read-output" class="sr-only focus-show">Read command output</button>
     </section>
   </main>
-  <noscript>JavaScript is needed for the command interface. You can also read the <a href="README.md">README.md</a> directly.</noscript>
 </body>
 </html>
