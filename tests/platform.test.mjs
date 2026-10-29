@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {test} from 'node:test';
+import {renderIndex} from '../scripts/update-readme.mjs';
 
 const read = path => readFileSync(new URL(path, import.meta.url), 'utf8');
-const html = read('../index.html');
+const html = await renderIndex();
 
 test('preload hints cover the entry module dependencies exactly once', () => {
   const imports = [...read('../app.js').matchAll(/from ['"]\.\/([^'"]+)['"]/g)]
@@ -26,11 +27,14 @@ test('unused embedding and background execution capabilities are blocked', () =>
   assert.deepEqual(directives.get('worker-src'), ["'none'"]);
 });
 
-test('the direct README fallback is inside the initial output region', () => {
-  const fallback = html.match(/<noscript>([\s\S]*?)<\/noscript>/);
-  assert.ok(fallback);
-  assert.match(fallback[1], /href="README\.md"/);
-  assert.ok(fallback.index > html.indexOf('id="screen"'));
-  assert.ok(fallback.index < html.indexOf('id="announcement"'));
+test('the readable README is present before JavaScript and controls wait for initialization', () => {
+  const document = html.match(/<div id="output"><section class="initial-document"([^>]*)>([\s\S]*?)<\/section><\/div>/);
+  assert.ok(document);
+  assert.match(document[1], /aria-label="README\.md"/);
+  assert.doesNotMatch(document[1], /\bhidden\b/);
+  assert.ok(document.index > html.indexOf('id="screen"'));
+  assert.ok(document.index < html.indexOf('id="announcement"'));
+  assert.match(html, /<section class="entry"[^>]*\shidden>/);
+  assert.match(read('../app.js'), /document\.querySelector\('\.entry'\)\.hidden = false/);
   assert.doesNotMatch(html, /user-scalable=no|maximum-scale=1/);
 });

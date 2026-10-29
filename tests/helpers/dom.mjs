@@ -1,6 +1,7 @@
 import {readFile} from 'node:fs/promises';
 import {runInNewContext} from 'node:vm';
 import {pathToFileURL} from 'node:url';
+import {renderIndex} from '../../scripts/update-readme.mjs';
 
 /**
  * Minimal deterministic DOM model for app logic, not a browser/layout emulator.
@@ -10,7 +11,7 @@ import {pathToFileURL} from 'node:url';
 export async function createApp({root = new URL('../../', import.meta.url), width = 1000, height = 800, viewport = true, hash = '', state = null} = {}) {
   if (typeof root === 'string') root = pathToFileURL(root.endsWith('/') ? root : `${root}/`);
   const source = await readFile(new URL('app.js', root), 'utf8');
-  const markup = await readFile(new URL('index.html', root), 'utf8');
+  const markup = await renderIndex(root);
   const staticTags = [...markup.matchAll(/<[^>]+>/gu)].map(match => match[0]);
   const importLine = /^import \{([^}]+)\} from ['"]\.\/([\w-]+)\.js['"];\s*/gmu;
   const modules = {};
@@ -99,6 +100,14 @@ export async function createApp({root = new URL('../../', import.meta.url), widt
       this._text = '';
       this.append(...nodes);
     }
+    cloneNode(deep = false) {
+      const clone = new Node(this.nodeType === 3 ? '#text' : this.tagName, this._text);
+      for (const key of ['className', 'id', 'href', 'tabIndex', 'hidden', 'disabled']) clone[key] = this[key];
+      clone.attributes = new Map(this.attributes);
+      clone.dataset = {...this.dataset};
+      if (deep) clone.append(...this.childNodes.map(node => node.cloneNode(true)));
+      return clone;
+    }
     remove() {
       if (this.parentNode) this.parentNode.childNodes.splice(this.parentNode.childNodes.indexOf(this), 1);
       this.parentNode = null;
@@ -129,6 +138,8 @@ export async function createApp({root = new URL('../../', import.meta.url), widt
       this.attributes.set(name, String(value));
       if (name === 'id') this.id = String(value);
       if (name === 'tabindex') this.tabIndex = Number(value);
+      if (name === 'class') this.className = String(value);
+      if (name === 'href') this.href = String(value);
     }
     getAttribute(name) {
       if (name.startsWith('data-')) return this.dataset[name.slice(5).replace(/-([a-z])/g, (_, letter) => letter.toUpperCase())] ?? null;
@@ -166,6 +177,7 @@ export async function createApp({root = new URL('../../', import.meta.url), widt
     node.className = className;
     const staticTag = staticTags.find(value => id ? value.includes(`id="${id}"`) : className && value.includes(`class="${className}"`));
     node.disabled = Boolean(staticTag && /\sdisabled(?:\s|>|=)/u.test(staticTag));
+    node.hidden = Boolean(staticTag && /\shidden(?:\s|>|=)/u.test(staticTag));
     parent.append(node);
     return node;
   };
@@ -179,6 +191,28 @@ export async function createApp({root = new URL('../../', import.meta.url), widt
   }
   const screen = make('div', 'screen', terminal, 'screen');
   const output = make('div', 'output', screen);
+  // Parse only the generator's escaped text/p/h1-h3/a subset, independently of
+  // its Markdown parser. Actual HTML parsing and layout stay in browser checks.
+  const initial = markup.match(/<section class="initial-document" aria-label="README.md">([\s\S]*?)<\/section>/u);
+  if (initial) {
+    const root = make('section', '', output, 'initial-document');
+    root.setAttribute('aria-label', 'README.md');
+    const stack = [root];
+    const entities = {'&amp;': '&', '&lt;': '<', '&gt;': '>', '&quot;': '"', '&#39;': "'"};
+    const decode = text => text.replace(/&(?:amp|lt|gt|quot|#39);/g, entity => entities[entity]);
+    for (const token of initial[1].match(/<[^>]+>|[^<]+/g) ?? []) {
+      if (token.startsWith('</')) stack.pop();
+      else if (token.startsWith('<')) {
+        const tag = /^<(p|h[1-3]|a)\b/u.exec(token)?.[1];
+        if (!tag) throw new Error(`Unexpected generated element: ${token}`);
+        const node = new Node(tag);
+        for (const [, name, value] of token.matchAll(/([\w-]+)="([^"]*)"/g)) node.setAttribute(name, decode(value));
+        stack.at(-1).append(node);
+        stack.push(node);
+      } else stack.at(-1).append(decode(token));
+    }
+    make('script', 'readme-source', screen).textContent = markup.match(/<script id="readme-source" type="application\/json">([\s\S]*?)<\/script>/u)[1];
+  }
   const announcement = make('div', 'announcement', terminal);
   const entry = make('section', '', terminal, 'entry');
   const form = make('form', 'command-form', entry);

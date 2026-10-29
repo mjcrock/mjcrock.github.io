@@ -7,7 +7,8 @@ import {readFile} from 'node:fs/promises';
 const moduleURL = process.env.ENGINE_PATH
   ? pathToFileURL(process.env.ENGINE_PATH)
   : new URL('../engine.js', import.meta.url);
-const {COMMANDS, FILES, LIMITS, README_SOURCE, Session, completions, execute, list, resolvePath} = await import(moduleURL.href);
+const engineModule = await import(moduleURL.href);
+const {COMMANDS, FILES, LIMITS, Session, completions, execute, list, resolvePath} = engineModule;
 const README = await readFile(new URL('README.md', moduleURL), 'utf8');
 const read = command => execute(command);
 
@@ -75,23 +76,29 @@ test('ls and open directory return only the root listing', () => {
   assert.deepEqual(execute('ls README.md'), {cwd: '/', kind: 'list', path: '/', entries: ['/README.md']});
 });
 
-test('open returns a reader action and cat a text-dump action with the identical raw source', () => {
+test('open and cat return distinct actions for the same canonical document', () => {
   for (const [command, kind] of [['open', 'file'], ['cat', 'cat']]) {
     for (const path of ['README.md', '/README.md', '~/README.md', './README.md', '../README.md']) {
       assert.deepEqual(read(`${command} ${path}`), {
-        cwd: '/', kind, path: '/README.md', entry: FILES['/README.md'], source: README,
+        cwd: '/', kind, path: '/README.md', entry: FILES['/README.md'],
       });
     }
   }
 });
 
-test('generated README source matches the independent canonical file exactly', () => {
-  assert.equal(typeof README_SOURCE, 'string');
-  assert.equal(README_SOURCE, README);
+test('generated HTML owns exact canonical source while the model returns content-independent actions', async () => {
+  const {renderIndex} = await import('../scripts/update-readme.mjs');
+  const html = await renderIndex();
+  const data = html.match(/<script id="readme-source" type="application\/json">([\s\S]*?)<\/script>/);
+  assert.ok(data, 'The build must supply inert source data.');
+  const source = JSON.parse(data[1]);
+  assert.equal(source, README);
+  assert.deepEqual(Buffer.from(source, 'utf8'), Buffer.from(README, 'utf8'));
+  assert.equal(Object.hasOwn(engineModule, 'README_SOURCE'), false);
   for (const command of ['open README.md', 'cat README.md']) {
     const result = execute(command);
-    assert.equal(result.source, README);
-    assert.deepEqual(Buffer.from(result.source, 'utf8'), Buffer.from(README, 'utf8'));
+    assert.equal(result.path, '/README.md');
+    assert.equal(Object.hasOwn(result, 'source'), false);
     assert.equal(Object.hasOwn(result.entry, 'lines'), false);
   }
 });
@@ -285,11 +292,11 @@ test('error recovery actions cannot carry hostile raw command or path content', 
   }
 });
 
-test('fresh sessions read the generated source immediately without mutable source state', () => {
+test('fresh sessions return document actions without owning mutable content', () => {
   const session = new Session();
   assert.equal(Object.hasOwn(session, 'readme'), false);
-  assert.equal(session.submit('cat README.md').source, README);
-  assert.equal(session.submit('open README.md').source, README);
+  assert.equal(session.submit('cat README.md').path, '/README.md');
+  assert.equal(session.submit('open README.md').path, '/README.md');
   assert.equal(session.submit('ls').kind, 'list');
   assert.equal(session.cwd, '/');
 });
@@ -310,7 +317,7 @@ test('history remains bounded across repeated submissions, including errors', ()
   assert.equal(session.cursor, LIMITS.history);
 });
 
-test('clear preserves source and history; history includes its own command', () => {
+test('clear preserves document identity and history; history includes its own command', () => {
   const session = new Session();
   session.submit('cat README.md');
   assert.equal(session.submit('clear').kind, 'clear');
@@ -349,7 +356,7 @@ test('submitting a recalled command resets the cursor and saved draft', () => {
   assert.equal(session.recall(1, 'help'), 'new draft');
 });
 
-test('sessions never share history or draft state and use the same canonical source', () => {
+test('sessions never share history or draft state and address the same canonical document', () => {
   const first = new Session();
   const second = new Session();
   first.submit('cat README.md');
@@ -359,6 +366,26 @@ test('sessions never share history or draft state and use the same canonical sou
   assert.equal(second.cursor, 0);
   assert.equal(Object.hasOwn(first, 'readme'), false);
   assert.equal(Object.hasOwn(second, 'readme'), false);
-  assert.equal(first.submit('cat README.md').source, README);
-  assert.equal(second.submit('cat README.md').source, README);
+  assert.equal(first.submit('cat README.md').path, '/README.md');
+  assert.equal(second.submit('cat README.md').path, '/README.md');
+});
+
+
+test('the hidden python aliases produce only a snake action and preserve input bounds', () => {
+  const session = new Session();
+  for (const command of ['python', 'python3', 'python -c alert(1)', 'python3 README.md']) {
+    assert.deepEqual(session.submit(command), {cwd: '/', kind: 'snake'});
+    assert.deepEqual(completions(command), []);
+  }
+  assert.deepEqual(session.history, ['python', 'python3', 'python -c alert(1)', 'python3 README.md']);
+  assert.deepEqual(completions('p'), ['pwd']);
+  assert.equal(COMMANDS.includes('python'), false);
+  assert.equal(COMMANDS.includes('python3'), false);
+  for (const command of ['python\n', 'python3\u0000', 'python ' + 'x'.repeat(LIMITS.input)]) {
+    assert.equal(session.submit(command).invalidInput, true);
+  }
+  assert.equal(session.history.length, 4);
+  for (const command of ['Python', 'python2', 'python3;pwd', '/usr/bin/python']) {
+    assert.equal(execute(command).kind, 'error');
+  }
 });

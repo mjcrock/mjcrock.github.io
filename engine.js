@@ -1,7 +1,4 @@
 // Pure command model. This is a fixed, read-only virtual filesystem, never a shell.
-// BEGIN GENERATED README — run node scripts/update-readme.mjs; do not edit here.
-export const README_SOURCE = "Mathematics, computing, and security.\n\n[GitHub](https://github.com/mjcrock) · [ORCID](https://orcid.org/0009-0005-2589-1596)\n";
-// END GENERATED README
 
 export const LIMITS = Object.freeze({input: 500, history: 50, output: 40});
 export const COMMANDS = Object.freeze(['help', 'ls', 'open', 'cat', 'cd', 'pwd', 'clear', 'history']);
@@ -58,6 +55,7 @@ export function execute(line, cwd = '/', history = []) {
   const [command, ...args] = line.trim().split(/\s+/u).filter(Boolean);
   const result = {cwd, kind: 'empty'};
   if (!command) return result;
+  if (command === 'python' || command === 'python3') return {...result, kind: 'snake'};
   if (!COMMANDS.includes(command)) {
     const matches = COMMANDS.filter(candidate => oneEditApart(command, candidate));
     return error(cwd, `Unknown command: ${command}`,
@@ -88,7 +86,7 @@ export function execute(line, cwd = '/', history = []) {
   }
   if (entry.type === 'directory') return {...result, kind: 'list', path, entries: list(path)};
   if (command === 'ls') return {...result, kind: 'list', path: cwd, entries: [path]};
-  return {...result, kind: command === 'cat' ? 'cat' : 'file', path, entry, source: README_SOURCE};
+  return {...result, kind: command === 'cat' ? 'cat' : 'file', path, entry};
 }
 
 export function completions(value, cwd = '/') {

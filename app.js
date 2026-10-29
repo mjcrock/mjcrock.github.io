@@ -1,6 +1,5 @@
-import {FILES, LIMITS, README_SOURCE, Session, completions, execute} from './engine.js';
+import {FILES, LIMITS, Session, completions, execute} from './engine.js';
 import {parseDocumentHash, documentHash, navigationState, navigationCwd} from './routing.js';
-import {markdownBlocks} from './markdown.js';
 
 const $ = id => document.getElementById(id);
 const output = $('output');
@@ -13,15 +12,16 @@ const completionPanel = $('completion-panel');
 const completionStatus = $('completion-status');
 const announcement = $('announcement');
 const terminal = document.querySelector('.terminal');
+// The build supplies the readable document. Retain it when output is cleared.
+const readme = output.firstElementChild.cloneNode(true);
+const rawReadme = $('readme-source').textContent;
 const session = new Session();
 let choices = [];
 let selectedChoice = -1;
 let completionAttempted = false;
 let lastNavigation = '';
 let composing = false;
-// One immutable authored document per page load. Keep only its parsed data;
-// each result still owns fresh DOM nodes. Reload invalidates this lazy cache.
-let readmeBlocks;
+let readmeSource;
 
 function element(tag, text, className) {
   const node = document.createElement(tag);
@@ -62,37 +62,42 @@ function commandButton(command, label = command) {
   return button;
 }
 
-function renderReadme(parent) {
-  readmeBlocks ??= markdownBlocks(README_SOURCE);
-  for (const block of readmeBlocks) {
-    const node = element(block.tag);
-    for (const part of block.parts) {
-      if (part.href) {
-        const link = element('a', part.text, 'document-link');
-        link.href = part.href;
-        node.append(link);
-      } else node.append(document.createTextNode(part.text));
+function renderErrorHint(parent, {hint, suggestions = []}) {
+  const line = element('p', undefined, 'dim');
+  let cursor = 0;
+  while (cursor < hint.length) {
+    let start = hint.length;
+    let match = '';
+    for (const command of suggestions) {
+      if (!command) continue;
+      const index = hint.indexOf(command, cursor);
+      if (index >= 0 && (index < start || (index === start && command.length > match.length))) {
+        start = index;
+        match = command;
+      }
     }
-    parent.append(node);
+    line.append(hint.slice(cursor, start));
+    if (!match) break;
+    // Only model-provided recovery commands become controls. All other text
+    // stays literal, and clicking fills the input without executing anything.
+    const button = element('button', match, 'inline-command');
+    button.type = 'button';
+    button.dataset.recall = match;
+    button.setAttribute('aria-label', `Fill command line with ${match}`);
+    line.append(button);
+    cursor = start + match.length;
   }
-}
-
-function initialDocument() {
-  const document = element('section', undefined, 'initial-document');
-  document.setAttribute('aria-label', 'README.md');
-  renderReadme(document);
-  output.append(document);
+  parent.append(line);
 }
 
 function renderResult(parent, result) {
   if (result.kind === 'help') {
-    parent.append(element('p', 'A small, read-only interface. Not a remote shell.'));
     const list = element('dl', undefined, 'help-list');
     for (const [command, description] of [
-      ['help', 'Show this guide'], ['ls [path]', 'List files and directories'],
-      ['open [path]', 'Read a file or browse a directory'], ['cat path', 'Print one file as plain text; no reader or navigation'],
-      ['cd [path]', 'Change directory; cd alone returns home'], ['pwd', 'Show the current directory'],
-      ['clear', 'Clear output; retain history and document link'], ['history', 'Recall recent commands']
+      ['help', 'Show commands'], ['ls [path]', 'List files and directories'],
+      ['open [path]', 'Read a file or browse a directory'], ['cat path', 'Show a file as plain text'],
+      ['cd [path]', 'Change directory'], ['pwd', 'Show the current directory'],
+      ['clear', 'Clear output'], ['history', 'Show recent commands']
     ]) list.append(element('dt', command), element('dd', description));
     parent.append(list);
     const hint = element('p', 'Try ');
@@ -115,9 +120,18 @@ function renderResult(parent, result) {
     link.href = documentHash(result.path);
     path.append(' · ', link);
     parent.append(path, element('h2', result.entry.title, 'file-title'));
-    renderReadme(parent);
+    parent.append(...Array.from(readme.childNodes, node => node.cloneNode(true)));
   } else if (result.kind === 'cat') {
-    parent.append(element('pre', result.source, 'file-text'));
+    readmeSource ??= JSON.parse(rawReadme);
+    parent.append(element('pre', readmeSource, 'file-text'));
+  } else if (result.kind === 'snake') {
+    const snake = element('pre', String.raw`     __
+ ___/ o\
+/   \__/-<
+\___/`, 'snake');
+    snake.setAttribute('role', 'img');
+    snake.setAttribute('aria-label', 'An ASCII python snake');
+    parent.append(snake);
   } else if (result.kind === 'history') {
     const list = element('ol', undefined, 'history-list');
     for (const [index, command] of result.entries.entries()) {
@@ -130,18 +144,8 @@ function renderResult(parent, result) {
     }
     parent.append(list);
   } else if (result.kind === 'error') {
-    parent.append(element('p', result.message, 'error'), element('p', result.hint, 'dim'));
-    if (result.suggestions?.length) {
-      const recovery = element('div', undefined, 'recovery');
-      recovery.append(element('span', 'Fill input: ', 'dim'));
-      for (const command of result.suggestions) {
-        const button = element('button', command, 'inline-command');
-        button.type = 'button';
-        button.dataset.recall = command;
-        recovery.append(button);
-      }
-      parent.append(recovery);
-    }
+    parent.append(element('p', result.message, 'error'));
+    renderErrorHint(parent, result);
   } else if (result.kind === 'location') {
     parent.append(element('p', `Now in ${displayPath()}`, 'dim'));
   } else if (result.kind === 'text') parent.append(element('p', result.message));
@@ -355,11 +359,13 @@ function navigate(initial = false) {
   hideSuggestions();
   completionAttempted = false;
   if (route.kind === 'home') {
-    output.replaceChildren();
-    initialDocument();
+    if (!initial) {
+      output.replaceChildren(readme.cloneNode(true));
+    }
     screen.scrollTop = 0;
     if (!initial) { screen.focus({preventScroll: true}); announce('README.md. Command history retained.'); }
   } else {
+    if (initial) output.replaceChildren();
     const result = route.kind === 'file' ? execute(`open ${route.path}`, cwd) : {
       kind: 'error', message: 'This document link is not available.',
       hint: 'Use ls / to browse the available files.', suggestions: ['ls /']
@@ -371,6 +377,7 @@ function navigate(initial = false) {
 window.addEventListener('popstate', () => navigate());
 window.addEventListener('hashchange', () => navigate());
 navigate(true);
+document.querySelector('.entry').hidden = false;
 
 // No initial autofocus. Resize preserves the reader's position, never the bottom.
 if (window.visualViewport) {

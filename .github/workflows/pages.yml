@@ -26,19 +26,21 @@ jobs:
         with:
           node-version: '24'
           package-manager-cache: false
-      - name: Generate and test
+      - name: Validate source and test
         run: |
-          node scripts/update-readme.mjs
           node scripts/update-readme.mjs --check
           node --check app.js
           node --check engine.js
           node --check routing.js
           node --check markdown.js
+          node --check scripts/serve.mjs
+          node --check tests/browser-check.mjs
           node --test tests/*.test.mjs
       - name: Stage public files only
         run: |
           mkdir _site
-          cp index.html style.css app.js engine.js routing.js markdown.js README.md _site/
+          node scripts/update-readme.mjs > _site/index.html
+          cp style.css app.js engine.js routing.js README.md _site/
           touch _site/.nojekyll
       - name: Upload site
         uses: actions/upload-pages-artifact@7b1f4a764d45c48632c6b24a0339c27f5614fb0b # v4

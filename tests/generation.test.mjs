@@ -1,25 +1,26 @@
 import assert from 'node:assert/strict';
-import {copyFile, mkdtemp, mkdir, readFile, rm, stat, utimes, writeFile} from 'node:fs/promises';
+import {copyFile, mkdtemp, mkdir, readFile, readdir, rm, stat, utimes, writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {spawnSync} from 'node:child_process';
-import {pathToFileURL} from 'node:url';
 import {test} from 'node:test';
 
-const start = '// BEGIN GENERATED README — run node scripts/update-readme.mjs; do not edit here.';
-const end = '// END GENERATED README';
-const prefix = 'export const before = "unchanged before";\n';
-const suffix = '\nexport const after = "unchanged after";\n';
-const region = `${start}\nexport const README_SOURCE = "stale";\n${end}`;
+const start = '<!-- BEGIN GENERATED README -->';
+const end = '<!-- END GENERATED README -->';
+const prefix = '<!doctype html>\n<main>\n';
+const suffix = '\n</main>\n';
+const region = `${start}\n${end}`;
+const rawJSON = html => html.match(/<script id="readme-source" type="application\/json">([\s\S]*?)<\/script>/)[1];
 
-async function fixture(t, source = '[GitHub](https://github.com/mjcrock)\n', engine = prefix + region + suffix) {
+async function fixture(t, source = '[GitHub](https://github.com/mjcrock)\n', html = prefix + region + suffix) {
   const root = await mkdtemp(join(tmpdir(), 'readme-generation-'));
   t.after(() => rm(root, {recursive: true, force: true}));
   await mkdir(join(root, 'scripts'));
   await copyFile(new URL('../scripts/update-readme.mjs', import.meta.url), join(root, 'scripts/update-readme.mjs'));
+  await copyFile(new URL('../markdown.js', import.meta.url), join(root, 'markdown.js'));
   await writeFile(join(root, 'package.json'), '{"type":"module"}\n');
   await writeFile(join(root, 'README.md'), source);
-  await writeFile(join(root, 'engine.js'), engine);
+  await writeFile(join(root, 'index.html'), html);
   const run = (...args) => {
     // Deliberately run outside the project: paths must resolve beside the script.
     const result = spawnSync(process.execPath, [join(root, 'scripts/update-readme.mjs'), ...args], {
@@ -38,12 +39,12 @@ async function fixture(t, source = '[GitHub](https://github.com/mjcrock)\n', eng
 
 function succeeds(result) {
   assert.equal(result.status, 0, result.stderr);
-  assert.equal(result.stdout, '');
   assert.equal(result.stderr, '');
+  return result.stdout;
 }
 
 async function rejectsWithoutWrites(project, pattern, ...args) {
-  const files = ['README.md', 'engine.js'];
+  const files = ['README.md', 'index.html'];
   const snapshot = async () => Promise.all(files.map(async file => {
     const info = await stat(join(project.root, file), {bigint: true});
     return {bytes: await project.read(file), mtime: info.mtimeNs};
@@ -51,45 +52,56 @@ async function rejectsWithoutWrites(project, pattern, ...args) {
   const before = await snapshot();
   const result = project.run(...args);
   assert.notEqual(result.status, 0);
+  assert.equal(result.stdout, '', 'Invalid input must not emit partial HTML.');
   assert.match(result.stderr, pattern);
   assert.deepEqual(await snapshot(), before);
 }
 
 async function roundTrip(project, source) {
-  succeeds(project.run());
-  succeeds(project.run('--check'));
-  const generated = (await project.read('engine.js')).toString('utf8');
+  const template = await project.read('index.html');
+  const generated = succeeds(project.run());
+  assert.equal(succeeds(project.run('--check')), '');
   assert.ok(generated.startsWith(prefix));
   assert.ok(generated.endsWith(suffix));
-  const module = await import(pathToFileURL(join(project.root, 'engine.js')).href);
-  assert.equal(module.before, 'unchanged before');
-  assert.equal(module.after, 'unchanged after');
-  assert.deepEqual(Buffer.from(module.README_SOURCE, 'utf8'), Buffer.from(source));
+  assert.deepEqual(Buffer.from(JSON.parse(rawJSON(generated)), 'utf8'), Buffer.from(source));
   assert.deepEqual(await project.read('README.md'), Buffer.from(source));
+  assert.deepEqual(await project.read('index.html'), template);
   return generated;
 }
 
-test('generation is deterministic; current --check and update do not rewrite files', async t => {
+test('generation is deterministic and neither rendering nor --check rewrites source files', async t => {
   const project = await fixture(t);
+  const entries = await readdir(project.root, {recursive: true});
+  const template = await project.read('index.html');
   const generated = await roundTrip(project, '[GitHub](https://github.com/mjcrock)\n');
   const date = new Date('2001-01-01T00:00:00Z');
-  const files = ['README.md', 'engine.js'].map(file => join(project.root, file));
+  const files = ['README.md', 'index.html'].map(file => join(project.root, file));
   for (const file of files) await utimes(file, date, date);
   const before = await Promise.all(files.map(file => stat(file, {bigint: true})));
-  succeeds(project.run('--check'));
-  succeeds(project.run());
+  assert.equal(succeeds(project.run('--check')), '');
+  assert.equal(succeeds(project.run()), generated);
   const after = await Promise.all(files.map(file => stat(file, {bigint: true})));
   assert.deepEqual(after.map(info => [info.mtimeNs, info.size]), before.map(info => [info.mtimeNs, info.size]));
-  assert.equal((await project.read('engine.js')).toString(), generated);
+  assert.deepEqual(await project.read('index.html'), template);
+  assert.deepEqual(await readdir(project.root, {recursive: true}), entries);
 });
 
-test('stale --check fails read-only and update repairs the exact canonical text', async t => {
+test('README edits appear in the next render without updating the source template', async t => {
   const project = await fixture(t);
-  await rejectsWithoutWrites(project, /README\.md changed/, '--check');
-  succeeds(project.run());
+  const first = await roundTrip(project, '[GitHub](https://github.com/mjcrock)\n');
   await project.write('README.md', 'Changed canonical source.\n');
-  await rejectsWithoutWrites(project, /README\.md changed/, '--check');
-  await roundTrip(project, 'Changed canonical source.\n');
+  assert.equal(succeeds(project.run('--check')), '');
+  const next = await roundTrip(project, 'Changed canonical source.\n');
+  assert.notEqual(next, first);
+});
+
+test('baked generated content in the source template rejects without writes', async t => {
+  for (const content of ['stale content', '<div id="output">stale</div>', '<!-- placeholder -->']) {
+    const html = `${prefix}${start}\n${content}\n${end}${suffix}`;
+    const project = await fixture(t, 'Canonical source\n', html);
+    await rejectsWithoutWrites(project, /must be empty/);
+    await rejectsWithoutWrites(project, /must be empty/, '--check');
+  }
 });
 
 test('BOM, CRLF, non-ASCII text and final newline round-trip byte for byte', async t => {
@@ -105,9 +117,35 @@ test('quotes, slashes, replacement tokens and script-looking text remain inert s
   const source = '\\ " \' / $& $` $\' $$\n"; throw new Error("escaped source"); //\n<script>alert(1)</script>\u2028\u2029\n';
   const generated = await roundTrip(await fixture(t, source), source);
   assert.ok(!generated.includes('<script>'));
-  assert.ok(!generated.includes('\u2028'));
-  assert.ok(!generated.includes('\u2029'));
+  assert.ok(!rawJSON(generated).includes('\u2028'));
+  assert.ok(!rawJSON(generated).includes('\u2029'));
   assert.ok(generated.includes('\\u003cscript>'));
+});
+
+test('formatted content is static safe HTML and the original source stays inert JSON', async t => {
+  const source = '# Heading & <tag>\n\n[A&B <b> "quoted"](https://example.com/?x="a"&y=\'b\') and &lt; &#x3c;\n\n</ScRiPt><img src=x onerror=alert(1)>\n';
+  const generated = await roundTrip(await fixture(t, source), source);
+  assert.ok(generated.includes('<h1>Heading &amp; &lt;tag&gt;</h1>'));
+  assert.ok(generated.includes('<a class="document-link" href="https://example.com/?x=&quot;a&quot;&amp;y=&#39;b&#39;">A&amp;B &lt;b&gt; &quot;quoted&quot;</a> and &amp;lt; &amp;#x3c;'));
+  assert.ok(generated.includes('&lt;/ScRiPt&gt;&lt;img src=x onerror=alert(1)&gt;'));
+  assert.equal((generated.match(/<script\b/gi) || []).length, 1);
+  assert.equal((generated.match(/<\/script>/gi) || []).length, 1);
+  assert.doesNotMatch(generated, /<img\b|<b>/i);
+  assert.ok(!rawJSON(generated).includes('<'));
+});
+
+test('only supported heading tags and HTTPS links become markup', async t => {
+  const source = '# One\n\n## Two\n\n### Three\n\n#### Plain\n\n[bad](javascript:alert%281%29) [relative](README.md) [good](https://example.com/)\n';
+  const generated = await roundTrip(await fixture(t, source), source);
+  assert.ok(generated.includes('<h1>One</h1><h2>Two</h2><h3>Three</h3><p>#### Plain</p>'));
+  assert.ok(generated.includes('[bad](javascript:alert%281%29) [relative](README.md)'));
+  assert.equal((generated.match(/<a /g) || []).length, 1);
+});
+
+test('raw cat data preserves NUL even though HTML normalizes it in formatted text', async t => {
+  const source = 'before\u0000after\n';
+  const generated = await roundTrip(await fixture(t, source), source);
+  assert.ok(rawJSON(generated).includes('\\u0000'));
 });
 
 test('authored marker-like lines never become structural generated markers', async t => {
@@ -138,19 +176,19 @@ test('malformed UTF-8 fails rather than replacing or normalizing source', async 
 });
 
 test('missing, duplicate and reversed marker lines reject without writes', async t => {
-  for (const engine of [
+  for (const html of [
     '', start, end, `${end}\n${start}`, `${start}\n${start}\n${end}`,
     `${start}\n${end}\n${end}`, ` ${start}\n${end}`, `${start} extra\n${end}`,
   ]) {
-    const project = await fixture(t, 'Source\n', engine);
+    const project = await fixture(t, 'Source\n', html);
     await rejectsWithoutWrites(project, /exactly one generated README region/);
     await rejectsWithoutWrites(project, /exactly one generated README region/, '--check');
   }
 });
 
-test('CRLF marker lines are accepted while surrounding engine text is untouched', async t => {
-  const engine = prefix + region.replaceAll('\n', '\r\n') + suffix;
-  await roundTrip(await fixture(t, 'Source\n', engine), 'Source\n');
+test('CRLF marker lines are accepted while surrounding HTML is untouched', async t => {
+  const html = prefix + region.replaceAll('\n', '\r\n') + suffix;
+  await roundTrip(await fixture(t, 'Source\n', html), 'Source\n');
 });
 
 test('unsupported CLI arguments reject without changing files', async t => {
