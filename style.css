@@ -256,6 +256,10 @@ form:focus-within {
   margin-top: 8px;
 }
 
+.tools-toggle {
+  display: none;
+}
+
 .keys {
   display: flex;
   align-items: center;
@@ -550,50 +554,82 @@ form:focus-within {
   overflow-wrap: anywhere;
 }
 
-/* Keep the input and actions usable when a mobile keyboard leaves little height. */
-@media(max-height:420px) and (max-width:600px) {
-  .terminal {
-    min-height: max(180px, 11.25rem);
-  }
-  .bar {
-    min-height: 56px;
-    padding-block: 4px;
-  }
-  .screen {
-    padding-block: 4px;
-  }
-  .completion-panel {
-    max-height: 84px;
-  }
-  .completion-status {
-    margin-top: 4px;
-    font-size: .7rem;
-  }
-  .completions {
-    padding-bottom: 4px;
-  }
+/* Reserve three readable lines. If they cannot fit, let the page scroll. */
+body.compact-terminal {
+  --page-gap: 8px;
 }
-
-/* Some keyboards shrink only visualViewport; fit() applies this same compact mode. */
 .terminal.compact {
-  min-height: max(180px, 11.25rem);
+  --compact-input-height: max(44px, 1.5rem);
+  align-self: start;
+  height: calc(var(--viewport-height, 100dvh) - var(--page-inset-top) - var(--page-inset-bottom));
+  display: grid;
+  grid-template-rows: minmax(calc(5.1rem + 16px), 1fr) auto;
+  /* Output padding (16), form padding/borders (8), entry (17), frame (2). */
+  min-height: calc(5.1rem + var(--compact-input-height) + 43px);
 }
-.terminal.compact .bar {
-  min-height: 56px;
-  padding-block: 4px;
+.terminal.compact .bar,.terminal.compact .prompt {
+  display: none;
 }
 .terminal.compact .screen {
-  padding-block: 4px;
+  padding-block: 8px;
+  overscroll-behavior: auto;
+}
+.terminal.compact .entry {
+  padding: 8px;
+}
+.terminal.compact input {
+  height: var(--compact-input-height);
+}
+.terminal.compact .run {
+  min-width: 44px;
+  height: var(--compact-input-height);
+}
+.terminal.compact input:focus-visible {
+  outline: none;
+}
+.terminal.compact form:focus-within {
+  outline-offset: 0;
+}
+.terminal.compact .tools-toggle {
+  display: block;
+  flex: none;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0 6px;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  background: var(--raised);
+  font-size: .875rem;
+  line-height: 1.4;
+}
+.terminal.compact .toolbar {
+  display: none;
+  position: absolute;
+  bottom: calc(100% + 4px);
+  left: 8px;
+  right: 8px;
+  margin: 0;
+  padding: 8px;
+  max-height: min(12rem, calc(var(--viewport-height, 100dvh) - 80px));
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  box-shadow: 0 4px 16px #100d1466;
+  z-index: 1;
+}
+.terminal.compact.tools-open .toolbar {
+  display: flex;
 }
 .terminal.compact .completion-panel {
-  max-height: 84px;
+  max-height: min(12rem, calc(var(--viewport-height, 100dvh) - 80px));
 }
-.terminal.compact .completion-status {
-  margin-top: 4px;
-  font-size: .7rem;
-}
-.terminal.compact .completions {
-  padding-bottom: 4px;
+.terminal.compact .focus-show:focus {
+  position: absolute;
+  bottom: 100%;
+  left: 8px;
+  right: 8px;
+  margin: 0;
+  z-index: 1;
 }
 
 .site-name {
@@ -625,14 +661,6 @@ form:focus-within {
 
 .initial-document p + p {
   margin-top: .75rem;
-}
-
-.terminal.compact .site-name {
-  font-size: 1.2rem;
-}
-
-.terminal.compact .site-status {
-  font-size: .7rem;
 }
 
 /* Tablets can use the wide layout while still needing generous touch targets. */

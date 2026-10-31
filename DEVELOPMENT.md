@@ -107,8 +107,20 @@ feedback overlay the output above the stationary prompt. Without choices arrows
 recall history. Modified/IME keys remain untouched.
 Mobile sizing accounts for safe areas and the visual viewport, preserves layout
 during pinch zoom, and coalesces resize events into one animation frame. CSS
-provides the fallback when the visual viewport API is unavailable. Large default
+sizes the output in proportion to text size, with window dimensions as the
+fallback when the visual viewport API is unavailable. Large default
 fonts, short landscape layouts, coarse pointers, and forced colors are supported.
+On narrow or touch-first screens with little available height, the header and full prompt give
+way to output and a single command row. Tools reveals help, completion, and
+history without permanently reserving another row. Tapping these controls while
+typing preserves input focus until an action intentionally changes it. The
+disclosure and completion panel never cover one another. Output reserves at
+least three text lines, and the page can scroll if enlarged text makes the
+whole interface taller than the visible area. Desktop layout is unchanged.
+The compact-height threshold grows with the root text size, so larger text does
+not fall back to a cramped full layout just above the normal breakpoint. Opening
+help or browsing a document preserves an unfinished command. Closing an already
+closed panel performs no DOM writes during ordinary typing.
 The owner masthead and visitor `guest` prompt are distinct. The command row has
 a visible boundary before focus. “Show commands” opens help directly without
 focusing the input, and has a full-size touch target. The desktop frame is

@@ -30,13 +30,14 @@
       <form id="command-form" autocomplete="off">
         <span class="prompt" id="prompt">guest:~ $</span>
         <input id="command" name="command" type="text" maxlength="500" aria-label="Terminal command" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="completions" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="send">
+        <button type="button" id="tools-toggle" class="tools-toggle" aria-expanded="false" aria-controls="command-tools">Tools</button>
         <button type="submit" class="run" aria-label="Run command">↵</button>
       </form>
       <div id="completion-panel" class="completion-panel" hidden>
         <p id="completion-status" class="completion-status"></p>
         <div id="completions" class="completions" role="listbox" hidden aria-label="Completion choices"></div>
       </div>
-      <div class="toolbar">
+      <div class="toolbar" id="command-tools">
         <button type="button" data-command="help" class="show-commands">Show commands</button>
         <div class="keys">
           <button type="button" id="complete" aria-label="Complete command or path" title="Complete command or path">⇥<span> complete</span></button>

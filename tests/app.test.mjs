@@ -60,6 +60,7 @@ test('empty submissions leave output and focus unchanged', async () => {
 test('delegated listing clicks on nested content focus the document, not the input', async () => {
   const app = await ready();
   app.submit('ls /');
+  app.change('unfinished');
   app.resetMetrics();
   const file = app.output.lastElementChild.querySelector('button');
   const nested = app.document.createElement('span');
@@ -67,6 +68,7 @@ test('delegated listing clicks on nested content focus the document, not the inp
   app.click(nested);
   const result = app.output.lastElementChild;
   assert.equal(result.getAttribute('aria-label'), 'README.md');
+  assert.equal(app.input.value, 'unfinished');
   assert.equal(app.document.activeElement, result);
   assert.ok(app.metrics.focusCalls.every(call => call.node !== app.input));
   assert.ok(result.textContent.includes(renderedText));
@@ -89,6 +91,27 @@ test('dynamic listing and help controls use the same delegated command handler',
   assert.ok(helpButton);
   app.click(helpButton);
   assert.equal(app.output.lastElementChild.querySelector('pre').textContent, readme);
+});
+
+test('browsing help and documents preserves an unfinished command and records browsed commands', async () => {
+  const app = await ready();
+  app.change('cat RE');
+  app.click(app.document.querySelector('.show-commands'));
+  assert.equal(app.input.value, 'cat RE');
+  const open = app.output.lastElementChild.querySelectorAll('button').find(node => node.dataset.command === 'open README.md');
+  app.click(open);
+  assert.equal(app.input.value, 'cat RE');
+  assert.equal(app.location.hash, '#/README.md');
+  assert.equal(app.document.activeElement, app.output.lastElementChild);
+  app.key('ArrowUp');
+  assert.equal(app.input.value, 'open README.md');
+  app.key('ArrowUp');
+  assert.equal(app.input.value, 'help');
+  app.key('ArrowDown');
+  app.key('ArrowDown');
+  assert.equal(app.input.value, 'cat RE');
+  app.submit('pwd');
+  assert.equal(app.input.value, '', 'Submitting a typed command still clears the input');
 });
 
 test('delegation ignores non-buttons, unrelated buttons, and foreign button targets', async () => {
@@ -420,6 +443,10 @@ test('viewport size passes to CSS for safe-area sizing; missing visualViewport i
   fallback.submit('pwd');
   fallback.flushFrame();
   assert.equal(fallback.metrics.geometryReads, 2);
+  fallback.resize(390, 250);
+  fallback.flushFrame();
+  assert.equal(fallback.terminal.style.getPropertyValue('--viewport-height'), '250px');
+  assert.equal(fallback.terminal.classList.contains('compact'), true);
 });
 
 test('pinch zoom preserves layout, draft and reader position; keyboard sizing resumes at normal scale', async () => {
@@ -783,10 +810,227 @@ test('compact mode follows the visual viewport without changing the draft or rea
     app.resize(width, height);
     app.flushFrame();
     assert.equal(app.terminal.classList.contains('compact'), compact, `${width}x${height}`);
+    assert.equal(app.document.body.classList.contains('compact-terminal'), compact, `${width}x${height}`);
     assert.equal(app.input.value, 'unfinished command');
     assert.equal(app.screen.scrollTop, 123);
   }
   assert.equal(app.metrics.scrollWrites, 0);
+  assert.equal(app.metrics.geometryReads, 0);
+});
+
+test('compact layout allows more reading space when text is enlarged', async () => {
+  const app = await ready({width: 390, height: 650, fontSize: 32});
+  app.input.focus();
+  app.change('unfinished command');
+  app.screen.scrollTop = 123;
+  app.resetMetrics();
+  for (const [height, compact] of [[641, false], [640, true], [450, true], [421, true], [650, false]]) {
+    app.resize(390, height);
+    app.flushFrame();
+    assert.equal(app.terminal.classList.contains('compact'), compact, `${height}px with enlarged text`);
+    assert.equal(app.document.body.classList.contains('compact-terminal'), compact);
+    assert.equal(app.terminal.style.getPropertyValue('--viewport-height'), `${height}px`);
+    assert.equal(app.input.value, 'unfinished command');
+    assert.equal(app.document.activeElement, app.input);
+    assert.equal(app.screen.scrollTop, 123);
+  }
+  assert.equal(app.metrics.focusCalls.length, 0);
+  assert.equal(app.metrics.scrollWrites, 0);
+  assert.equal(app.metrics.geometryReads, 0);
+  const standard = await ready({width: 390, height: 441});
+  assert.equal(standard.terminal.classList.contains('compact'), false);
+});
+
+test('wide touch screens receive keyboard sizing while fine-pointer desktops retain their layout', async () => {
+  const app = await ready({width: 844, height: 220, fontSize: 32});
+  assert.equal(app.terminal.classList.contains('compact'), false);
+  assert.equal(app.terminal.style.getPropertyValue('--viewport-height'), '');
+  app.input.focus();
+  app.change('unfinished');
+  app.resetMetrics();
+  app.setCoarsePointer(true);
+  app.flushFrame();
+  assert.equal(app.terminal.classList.contains('compact'), true);
+  assert.equal(app.document.body.classList.contains('compact-terminal'), true);
+  assert.equal(app.terminal.style.getPropertyValue('--viewport-height'), '220px');
+  app.resize(844, 700);
+  app.flushFrame();
+  assert.equal(app.terminal.classList.contains('compact'), false);
+  assert.equal(app.terminal.style.getPropertyValue('--viewport-height'), '700px');
+  app.setCoarsePointer(false);
+  app.flushFrame();
+  assert.equal(app.terminal.style.getPropertyValue('--viewport-height'), '');
+  assert.equal(app.document.body.classList.contains('compact-terminal'), false);
+  assert.equal(app.input.value, 'unfinished');
+  assert.equal(app.document.activeElement, app.input);
+  assert.equal(app.metrics.focusCalls.length, 0);
+  assert.equal(app.metrics.scrollWrites, 0);
+  const touch = await ready({width: 844, height: 220, coarsePointer: true});
+  assert.equal(touch.terminal.classList.contains('compact'), true);
+});
+
+test('compact Tools disclosure preserves the draft and focus without submitting a command', async () => {
+  const app = await ready({width: 390, height: 250});
+  app.input.focus();
+  app.change('h');
+  app.key('Tab');
+  assert.equal(app.completionPanel.hidden, false);
+  const output = app.output.textContent;
+  const label = app.document.createElement('span');
+  app.toolsToggle.append(label);
+  app.resetMetrics();
+  app.click(label);
+  assert.equal(app.toolsToggle.getAttribute('aria-expanded'), 'true');
+  assert.equal(app.toolsToggle.getAttribute('aria-controls'), app.toolbar.id);
+  assert.equal(app.terminal.classList.contains('tools-open'), true);
+  assert.equal(app.completionPanel.hidden, true);
+  assert.equal(app.input.value, 'h');
+  assert.equal(app.output.textContent, output);
+  assert.equal(app.document.activeElement, app.input);
+  app.click(app.toolsToggle);
+  assert.equal(app.toolsToggle.getAttribute('aria-expanded'), 'false');
+  assert.equal(app.terminal.classList.contains('tools-open'), false);
+  assert.equal(app.metrics.focusCalls.length, 0);
+  assert.equal(app.metrics.geometryReads, 0);
+  app.change('h');
+  app.click(app.toolsToggle);
+  app.key('Tab');
+  assert.equal(app.toolsToggle.getAttribute('aria-expanded'), 'false');
+  assert.equal(app.completionPanel.hidden, false, 'Tab completion replaces Tools instead of overlapping it');
+  for (const type of ['beforeinput', 'input', 'compositionstart']) {
+    app.change('unfinished');
+    app.click(app.toolsToggle);
+    app.dispatch(app.input, type);
+    assert.equal(app.toolsToggle.getAttribute('aria-expanded'), 'false', type);
+    assert.equal(app.input.value, 'unfinished');
+    assert.equal(app.document.activeElement, app.input);
+    if (type === 'compositionstart') app.dispatch(app.input, 'compositionend');
+  }
+});
+
+test('pointer activation of Tools keeps an existing input focus without blocking other pointers', async () => {
+  const app = await ready({width: 390, height: 250});
+  const nested = app.document.createElement('span');
+  app.toolsToggle.append(nested);
+  app.input.focus();
+  for (const target of [nested, button(app, 'complete'), button(app, 'previous')]) {
+    assert.equal(app.dispatch(target, 'pointerdown').defaultPrevented, false, 'Touch clicks must not be suppressed');
+    assert.equal(app.dispatch(target, 'mousedown').defaultPrevented, true);
+  }
+  for (const [target, init] of [[app.toolsToggle, {button: 2}], [app.input, {}], [app.screen, {}]]) {
+    assert.equal(app.dispatch(target, 'mousedown', init).defaultPrevented, false);
+  }
+  app.screen.focus();
+  assert.equal(app.dispatch(app.toolsToggle, 'mousedown').defaultPrevented, false);
+  assert.equal(app.document.activeElement, app.screen);
+  app.resize(1000, 800);
+  app.flushFrame();
+  app.input.focus();
+  assert.equal(app.dispatch(button(app, 'complete'), 'mousedown').defaultPrevented, false);
+});
+
+test('tool actions close the disclosure and retain their intended input or output focus', async () => {
+  const app = await ready({width: 390, height: 250});
+  app.submit('pwd');
+  app.change('h');
+  app.click(app.toolsToggle);
+  app.click(button(app, 'complete'));
+  assert.equal(app.terminal.classList.contains('tools-open'), false);
+  assert.equal(app.completionPanel.hidden, false);
+  assert.equal(app.document.activeElement, app.input);
+  app.click(app.toolsToggle);
+  app.click(app.document.querySelector('.show-commands'));
+  assert.equal(app.terminal.classList.contains('tools-open'), false);
+  assert.ok(app.output.lastElementChild.querySelector('.help-list'));
+  assert.equal(app.document.activeElement, app.output.lastElementChild);
+  app.click(app.toolsToggle);
+  app.click(button(app, 'previous'));
+  assert.equal(app.terminal.classList.contains('tools-open'), false);
+  assert.equal(app.input.value, 'help');
+  assert.equal(app.document.activeElement, app.input);
+});
+
+test('Tools Escape respects composition and modifiers and restores only disclosure focus', async () => {
+  const app = await ready({width: 390, height: 250});
+  const complete = button(app, 'complete');
+  app.click(app.toolsToggle);
+  complete.focus();
+  for (const init of [{isComposing: true}, {ctrlKey: true}, {altKey: true}, {metaKey: true}, {shiftKey: true}]) {
+    assert.equal(app.key('Escape', init, complete).defaultPrevented, false);
+    assert.equal(app.terminal.classList.contains('tools-open'), true);
+  }
+  assert.equal(app.key('Escape', {}, complete).defaultPrevented, true);
+  assert.equal(app.terminal.classList.contains('tools-open'), false);
+  assert.equal(app.document.activeElement, app.toolsToggle);
+  app.input.focus();
+  app.click(app.toolsToggle);
+  app.key('Escape');
+  assert.equal(app.terminal.classList.contains('tools-open'), false);
+  assert.equal(app.document.activeElement, app.input);
+});
+
+test('leaving Tools closes it without reopening the keyboard or changing the draft', async () => {
+  const app = await ready({width: 390, height: 250});
+  app.change('unfinished');
+  app.click(app.toolsToggle);
+  app.screen.focus();
+  app.click(app.screen);
+  assert.equal(app.toolsToggle.getAttribute('aria-expanded'), 'false');
+  assert.equal(app.document.activeElement, app.screen);
+  app.click(app.toolsToggle);
+  app.document.body.focus();
+  app.click(app.document.body);
+  assert.equal(app.toolsToggle.getAttribute('aria-expanded'), 'false');
+  assert.equal(app.document.activeElement, app.document.body);
+  assert.equal(app.input.value, 'unfinished');
+  const help = app.document.querySelector('.show-commands');
+  app.toolsToggle.focus();
+  app.click(app.toolsToggle);
+  app.dispatch(app.toolsToggle, 'focusout', {relatedTarget: app.runButton});
+  assert.equal(app.toolsToggle.getAttribute('aria-expanded'), 'true');
+  app.runButton.focus();
+  app.dispatch(app.runButton, 'focusout', {relatedTarget: help});
+  assert.equal(app.toolsToggle.getAttribute('aria-expanded'), 'true');
+  help.focus();
+  app.dispatch(help, 'focusout', {relatedTarget: null});
+  assert.equal(app.toolsToggle.getAttribute('aria-expanded'), 'true');
+  app.input.focus();
+  app.dispatch(help, 'focusout', {relatedTarget: app.input});
+  assert.equal(app.toolsToggle.getAttribute('aria-expanded'), 'false');
+  assert.equal(app.document.activeElement, app.input);
+});
+
+test('compact transitions keep the focused control visible without stealing input focus', async () => {
+  const app = await ready({width: 390, height: 250});
+  const help = app.document.querySelector('.show-commands');
+  app.toolsToggle.focus();
+  app.click(app.toolsToggle);
+  app.resize(390, 650);
+  app.flushFrame();
+  assert.equal(app.toolsToggle.getAttribute('aria-expanded'), 'false');
+  assert.equal(app.terminal.classList.contains('tools-open'), false);
+  assert.equal(app.document.activeElement, help);
+  app.resetMetrics();
+  app.resize(390, 250);
+  app.flushFrame();
+  assert.equal(app.toolsToggle.getAttribute('aria-expanded'), 'true');
+  assert.equal(app.document.activeElement, help);
+  assert.equal(app.metrics.focusCalls.length, 0, 'Entering compact keeps the focused tool visible in place');
+  app.key('Escape', {}, help);
+  app.resize(390, 260);
+  app.flushFrame();
+  assert.equal(app.toolsToggle.getAttribute('aria-expanded'), 'false', 'An ordinary compact resize does not reopen Tools');
+  app.input.focus();
+  app.change('unfinished');
+  app.click(app.toolsToggle);
+  app.resetMetrics();
+  app.resize(1000, 800);
+  app.flushFrame();
+  assert.equal(app.terminal.classList.contains('compact'), false);
+  assert.equal(app.toolsToggle.getAttribute('aria-expanded'), 'false');
+  assert.equal(app.document.activeElement, app.input);
+  assert.equal(app.input.value, 'unfinished');
+  assert.equal(app.metrics.focusCalls.length, 0);
   assert.equal(app.metrics.geometryReads, 0);
 });
 

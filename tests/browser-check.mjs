@@ -26,19 +26,28 @@ try {
       await page.locator('.entry').waitFor();
       const input = page.locator('#command');
       const run = async value => { await input.fill(value); await input.press('Enter'); };
+      const openTools = async () => {
+        const toggle = page.locator('#tools-toggle');
+        if (await toggle.isVisible() && await toggle.getAttribute('aria-expanded') === 'false') await toggle.click();
+      };
       assert.equal(await page.locator('.site-name').textContent(), 'Michael J. Crockett');
       const showCommands = page.getByRole('button', {name: 'Show commands', exact: true});
       await showCommands.waitFor();
       assert.equal(await page.locator('.echo').count(), 0);
       assert.equal(await page.evaluate(() => document.activeElement === document.body), true);
+      await input.fill('unfinished command');
       await showCommands.click();
       assert.equal(await page.locator('.help-list').count(), 1, 'Show commands opens help in one click');
+      assert.equal(await input.inputValue(), 'unfinished command', 'Opening help preserves an unfinished command');
       assert.equal(await page.locator('.block').last().evaluate(node => node === document.activeElement), true);
       await run('cat README.md');
       assert.equal(await page.locator('.block').last().locator('pre').textContent(), source);
       assert.equal(page.url(), url);
       await run('open README.md');
       assert.equal(new URL(page.url()).hash, '#/README.md');
+      await input.fill('draft while browsing');
+      await page.getByRole('button', {name: 'open README.md', exact: true}).click();
+      assert.equal(await input.inputValue(), 'draft while browsing', 'Opening a document preserves an unfinished command');
       await run('ls /');
       assert.equal(await page.locator('.listing-row button').last().textContent(), 'README.md');
       await input.fill('draft');
@@ -67,14 +76,17 @@ try {
       assert.equal(await input.evaluate(node => node === document.activeElement), true);
       for (const [width, height] of [[320, 300], [390, 200], [390, 650], [844, 390], [1280, 900]]) {
         await page.setViewportSize({width, height}); await frames(page);
+        if (width > 600) assert.equal(await page.locator('.terminal').evaluate(node => node.classList.contains('compact')), false, 'Fine-pointer desktop layout stays expanded');
         await input.fill('');
         const before = await input.boundingBox();
+        await openTools();
         await page.locator('#complete').click();
         assert.deepEqual(await input.boundingBox(), before, `${engine} stationary prompt ${width}x${height}`);
         assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
         assert.equal(await page.locator('#completion-panel').evaluate(node => node.getBoundingClientRect().bottom <= document.querySelector('.entry').getBoundingClientRect().top + 1), true);
         assert.equal(await page.locator('.toolbar').evaluate(node => node.getBoundingClientRect().bottom <= document.querySelector('.terminal').getBoundingClientRect().bottom), true);
         await input.press('Escape');
+        await openTools();
         const helpBounds = await showCommands.boundingBox();
         assert.ok(helpBounds.width >= 44 && helpBounds.height >= 44, `${engine} help target ${width}x${height}`);
         await showCommands.click();
@@ -82,6 +94,171 @@ try {
         assert.equal(await input.evaluate(node => node === document.activeElement), false, 'Browsing help does not focus the keyboard input');
         assert.deepEqual(await input.boundingBox(), before, 'Showing help keeps the command row stationary');
       }
+
+      const compact = await browser.newPage({reducedMotion: 'reduce', hasTouch: true});
+      const field = compact.locator('#command');
+      const tools = compact.locator('#tools-toggle');
+      const toolbar = compact.locator('#command-tools');
+      compact.on('pageerror', error => errors.push(String(error)));
+      const outputSpace = () => compact.locator('.screen').evaluate(node => {
+        const rect = node.getBoundingClientRect();
+        const style = getComputedStyle(node);
+        const paddingTop = parseFloat(style.paddingTop), paddingBottom = parseFloat(style.paddingBottom);
+        const line = parseFloat(getComputedStyle(node.querySelector('.initial-document')).lineHeight);
+        const top = visualViewport?.offsetTop ?? 0;
+        const bottom = top + (visualViewport?.height ?? innerHeight);
+        return {
+          lines: (rect.height - paddingTop - paddingBottom) / line,
+          visibleLines: Math.max(0, Math.min(rect.bottom - paddingBottom, bottom) - Math.max(rect.top + paddingTop, top)) / line,
+          pageScrolls: document.documentElement.scrollHeight > innerHeight,
+        };
+      });
+      for (const [width, height, fontSize] of [[320, 220, 16], [390, 220, 24], [320, 260, 24], [390, 260, 32]]) {
+        await compact.setViewportSize({width, height});
+        await compact.goto(url);
+        await compact.locator('.entry').waitFor();
+        await compact.evaluate(size => {
+          document.documentElement.style.fontSize = `${size}px`;
+          window.dispatchEvent(new Event('resize'));
+        }, fontSize);
+        await field.fill('unfinished command'); await field.focus(); await frames(compact);
+        assert.equal(await compact.locator('.bar').isHidden(), true);
+        assert.equal(await toolbar.isHidden(), true);
+        assert.equal(await field.evaluate(node => parseFloat(getComputedStyle(node).fontSize)), fontSize);
+        assert.equal(await compact.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+        for (const control of [tools, compact.locator('.run')]) {
+          const rect = await control.boundingBox();
+          assert.ok(rect.width >= 44 && rect.height >= 44, 'Typing controls preserve full touch targets');
+        }
+        const space = await outputSpace();
+        assert.ok(space.visibleLines >= 3, `${engine} ${width}×${height}, ${fontSize}px text: ${space.visibleLines.toFixed(2)} visible output lines`);
+        const before = await field.boundingBox();
+        await tools.tap();
+        assert.equal(await tools.getAttribute('aria-expanded'), 'true');
+        assert.equal(await field.evaluate(node => document.activeElement === node), true, 'Tapping Tools preserves typing focus');
+        assert.equal(await field.inputValue(), 'unfinished command');
+        assert.deepEqual(await field.boundingBox(), before, 'Tools overlays output without moving the input');
+        await field.press('Escape');
+        assert.equal(await toolbar.isHidden(), true);
+        assert.equal(await field.evaluate(node => document.activeElement === node), true);
+      }
+      await tools.focus(); await tools.press('Enter');
+      assert.equal(await toolbar.isVisible(), true);
+      // macOS WebKit uses Option-Tab for all controls with its default settings.
+      const nextControl = engine === 'webkit' && process.platform === 'darwin' ? 'Alt+Tab' : 'Tab';
+      await tools.press(nextControl);
+      assert.equal(await compact.locator('.run').evaluate(node => document.activeElement === node), true);
+      assert.equal(await toolbar.isVisible(), true, 'Tab can cross the Run button without closing Tools');
+      await compact.locator('.run').press(nextControl);
+      const compactHelp = compact.getByRole('button', {name: 'Show commands', exact: true});
+      assert.equal(await compactHelp.evaluate(node => document.activeElement === node), true);
+      await compactHelp.press('Escape');
+      assert.equal(await toolbar.isHidden(), true);
+      assert.equal(await tools.evaluate(node => document.activeElement === node), true);
+      await field.fill('draft'); await tools.tap(); await field.press('x');
+      assert.equal(await field.inputValue(), 'draftx');
+      assert.equal(await toolbar.isHidden(), true, 'Typing dismisses Tools without losing input');
+      await field.fill('h'); await tools.tap(); await field.press('Tab');
+      assert.equal(await toolbar.isHidden(), true, 'Keyboard completion dismisses Tools');
+      assert.equal(await compact.locator('#completion-panel').isVisible(), true);
+      await field.press('Escape');
+      await field.fill('h');
+      await tools.click(); await compact.locator('#complete').click();
+      assert.equal(await toolbar.isHidden(), true);
+      assert.equal(await compact.locator('#completion-panel').isVisible(), true);
+      await tools.click();
+      assert.equal(await compact.locator('#completion-panel').isHidden(), true, 'Tools and completion panels are mutually exclusive');
+      await compact.getByRole('button', {name: 'Show commands', exact: true}).click();
+      assert.equal(await compact.locator('.help-list').count(), 1);
+      assert.equal(await field.inputValue(), 'h', 'Opening compact help preserves the draft');
+      await field.fill('draft');
+      await tools.click(); await compact.locator('#previous').click();
+      assert.equal(await field.inputValue(), 'help');
+      assert.equal(await toolbar.isHidden(), true);
+      await tools.click(); await compact.locator('#next').click();
+      assert.equal(await field.inputValue(), 'draft');
+      await tools.click();
+      await compact.locator('#previous').focus();
+      await compact.locator('#previous').press('Escape');
+      assert.equal(await tools.evaluate(node => document.activeElement === node), true, 'Keyboard dismissal returns focus to the disclosure');
+
+      for (const [width, height] of [[320, 180], [320, 200], [844, 220]]) {
+        await compact.setViewportSize({width, height});
+        await compact.goto(url); await compact.locator('.entry').waitFor();
+        await compact.evaluate(() => {
+          document.documentElement.style.fontSize = '32px';
+          window.dispatchEvent(new Event('resize'));
+        });
+        await field.focus(); await frames(compact);
+        const space = await outputSpace();
+        assert.ok(space.lines >= 3, 'Extreme text sizes retain readable output instead of clipping its container');
+        assert.equal(space.pageScrolls, true, 'Insufficient physical height falls back to normal page scrolling');
+        assert.equal(await compact.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+        await compact.evaluate(() => window.scrollTo(0, 0));
+        assert.ok(await compact.locator('.screen').evaluate(node => node.getBoundingClientRect().top >= 0));
+        await compact.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+        assert.ok(await field.evaluate(node => {
+          const rect = node.getBoundingClientRect();
+          return rect.top >= 0 && rect.bottom <= innerHeight;
+        }), 'The full-size input remains reachable by scrolling');
+      }
+      for (const [width, height, fontSize, isCompact] of [
+        [320, 421, 20, true], [320, 441, 20, false],
+        [320, 479, 24, true], [320, 480, 24, true], [320, 481, 24, false],
+        [390, 639, 32, true], [390, 640, 32, true], [390, 641, 32, false],
+        [844, 300, 24, true],
+      ]) {
+        await compact.setViewportSize({width, height});
+        await compact.goto(url); await compact.locator('.entry').waitFor();
+        await compact.evaluate(size => {
+          document.documentElement.style.fontSize = `${size}px`;
+          window.dispatchEvent(new Event('resize'));
+        }, fontSize);
+        await field.focus(); await frames(compact);
+        assert.equal(await compact.locator('.terminal').evaluate(node => node.classList.contains('compact')), isCompact, `${engine} compact boundary ${width}×${height}, ${fontSize}px text`);
+        assert.ok((await outputSpace()).visibleLines >= 3, `${engine} readable output at ${width}×${height}, ${fontSize}px text`);
+        assert.equal(await compact.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+        assert.equal(await field.evaluate(node => {
+          const rect = node.getBoundingClientRect();
+          const terminal = node.closest('.terminal').getBoundingClientRect();
+          const top = visualViewport?.offsetTop ?? 0;
+          const bottom = top + (visualViewport?.height ?? innerHeight);
+          return rect.top >= Math.max(terminal.top, top) && rect.bottom <= Math.min(terminal.bottom, bottom);
+        }), true, 'The input remains fully visible at the compact boundary');
+        for (const control of [compact.locator('.run'), isCompact ? tools : compact.getByRole('button', {name: 'Show commands', exact: true})]) {
+          const rect = await control.boundingBox();
+          assert.ok(rect.width >= 44 && rect.height >= 44, 'Boundary layouts retain full touch targets');
+        }
+      }
+      await field.fill('draft across layout changes'); await tools.focus();
+      await compact.setViewportSize({width: 844, height: 481}); await frames(compact);
+      assert.equal(await tools.isHidden(), true);
+      assert.equal(await compact.getByRole('button', {name: 'Show commands', exact: true}).evaluate(node => document.activeElement === node), true, 'Leaving compact mode transfers focus to the visible toolbar');
+      await compact.setViewportSize({width: 844, height: 480}); await frames(compact);
+      assert.equal(await toolbar.isVisible(), true, 'Entering compact mode keeps a focused toolbar visible');
+      assert.equal(await compact.getByRole('button', {name: 'Show commands', exact: true}).evaluate(node => document.activeElement === node), true);
+      assert.equal(await field.inputValue(), 'draft across layout changes');
+      await compact.setViewportSize({width: 390, height: 300});
+      await compact.goto(url); await compact.locator('.entry').waitFor();
+      await compact.evaluate(() => {
+        document.documentElement.style.fontSize = '24px';
+        // CSSOM assignments preserve the site's CSP while exercising user text spacing.
+        for (const node of document.querySelectorAll('*')) Object.assign(node.style, {lineHeight: '1.5', letterSpacing: '.12em', wordSpacing: '.16em'});
+        for (const paragraph of document.querySelectorAll('p')) paragraph.style.marginBottom = '2em';
+        window.dispatchEvent(new Event('resize'));
+      });
+      await field.focus(); await frames(compact);
+      assert.ok((await outputSpace()).visibleLines >= 3, 'User text spacing leaves readable output');
+      assert.equal(await compact.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+      await compact.goto(url); await compact.locator('.entry').waitFor();
+      await compact.evaluate(() => { document.documentElement.style.fontSize = ''; });
+      await compact.setViewportSize({width: 1280, height: 900}); await frames(compact);
+      const desktop = await compact.locator('.terminal').boundingBox();
+      assert.deepEqual([desktop.width, desktop.height], [960, 560], 'Desktop frame dimensions remain unchanged');
+      assert.equal(await tools.isHidden(), true);
+      assert.equal(await compact.locator('.bar').isVisible(), true);
+      assert.equal(await compact.getByRole('button', {name: 'Show commands', exact: true}).isVisible(), true);
+      await compact.close();
       await page.goto(url + '#/missing');
       await page.locator('.error').last().waitFor();
       assert.match(await page.locator('#output').textContent(), /not available/);
