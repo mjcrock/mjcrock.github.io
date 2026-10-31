@@ -241,17 +241,12 @@ export async function createApp({root = new URL('../../', import.meta.url), widt
     button.dataset.command = command;
     return button;
   });
-  const hintMarkup = markup.match(/<p[^>]*id="keyboard-help"[^>]*>([\s\S]*?)<\/p>/u)?.[1];
-  if (hintMarkup) {
-    const parts = hintMarkup.match(/^([\s\S]*?)<button([^>]+)>([^<]*)<\/button>([\s\S]*)$/u);
-    if (!parts) throw new Error('Update fixture for the changed keyboard hint markup.');
-    const [, before, attributes, label, after] = parts;
-    const hint = make('p', 'keyboard-help', toolbar, 'prompt-hint');
-    hint.append(before);
-    const help = make('button', '', hint, 'inline-command');
+  const helpMarkup = markup.match(/<button([^>]*class="show-commands"[^>]*)>([^<]*)<\/button>/u);
+  if (helpMarkup) {
+    const [, attributes, label] = helpMarkup;
+    const help = make('button', '', toolbar, 'show-commands');
     help.dataset.command = attributes.match(/data-command="([^"]+)"/u)?.[1];
     help.textContent = label;
-    hint.append(after);
   }
   for (const id of ['complete', 'previous', 'next']) make('button', id, toolbar);
   make('button', 'read-output', entry);

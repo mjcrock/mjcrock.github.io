@@ -29,7 +29,7 @@
     <section class="entry" aria-label="Command input" hidden>
       <form id="command-form" autocomplete="off">
         <span class="prompt" id="prompt">guest:~ $</span>
-        <input id="command" name="command" type="text" maxlength="500" aria-label="Terminal command" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="completions" aria-describedby="keyboard-help" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="send">
+        <input id="command" name="command" type="text" maxlength="500" aria-label="Terminal command" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="completions" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="send">
         <button type="submit" class="run" aria-label="Run command">↵</button>
       </form>
       <div id="completion-panel" class="completion-panel" hidden>
@@ -37,7 +37,7 @@
         <div id="completions" class="completions" role="listbox" hidden aria-label="Completion choices"></div>
       </div>
       <div class="toolbar">
-        <p class="prompt-hint" id="keyboard-help">Type <button type="button" data-command="help" class="inline-command">help</button> for commands.</p>
+        <button type="button" data-command="help" class="show-commands">Show commands</button>
         <div class="keys">
           <button type="button" id="complete" aria-label="Complete command or path" title="Complete command or path">⇥<span> complete</span></button>
           <button type="button" id="previous" aria-label="Previous command" title="Previous command">↑</button>

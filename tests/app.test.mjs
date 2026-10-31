@@ -802,7 +802,7 @@ test('README and command controls are ready synchronously without network or tim
   assert.ok(app.document.querySelectorAll('input, button').every(control => !control.disabled));
   assert.equal(app.document.querySelector('.site-name').textContent, 'Michael J. Crockett');
   assert.equal(app.document.querySelector('.site-status').textContent, 'Site in progress');
-  assert.equal(app.document.getElementById('keyboard-help').textContent, 'Type help for commands.');
+  assert.equal(app.document.querySelector('.show-commands').textContent, 'Show commands');
   for (const api of ['fetch', 'XMLHttpRequest', 'WebSocket', 'setTimeout', 'clearTimeout']) {
     assert.equal(api in app.globals, false, `${api} is not supplied by the fixture`);
   }
@@ -814,7 +814,8 @@ test('README and command controls are ready synchronously without network or tim
 
 test('help shows commands and short examples without introductory or detailed explanations', async () => {
   const app = await ready();
-  app.submit('help');
+  app.click(app.document.querySelector('.show-commands'));
+  assert.equal(app.document.activeElement, app.output.lastElementChild);
   const result = app.output.lastElementChild.querySelector('.result');
   assert.deepEqual(result.querySelectorAll('p').map(node => node.textContent), [
     'Try cat README.md or open README.md.',

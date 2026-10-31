@@ -121,10 +121,10 @@ test('runtime module imports resolve to local files, including the bounded route
 });
 
 
-test('approved identity, one short hint, and real canonical README replace placeholders', () => {
+test('approved identity, direct help control, and real canonical README replace placeholders', () => {
   assert.match(html, /<h1 class="site-name">Michael J\. Crockett<\/h1>/);
   assert.match(html, /<p class="site-status">Site in progress<\/p>/);
-  assert.match(html, /id="keyboard-help">Type <button[^>]+>help<\/button> for commands\.<\/p>/);
+  assert.match(html, /<button type="button" data-command="help" class="show-commands">Show commands<\/button>/);
   assert.doesNotMatch(html, /<footer|class="mode"|data-command="ls \/"|data-command="open \/writing\/sample"/);
   assert.doesNotMatch(app + html, /Interactive study|Interactive terminal|Generic placeholders|content placeholders/);
   assert.ok(existsSync(new URL('README.md', root)));
