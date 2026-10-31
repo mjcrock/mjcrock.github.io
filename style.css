@@ -9,6 +9,7 @@
   --rose: #d4bac9;
   --line: #65556f;
   --softline: #473c51;
+  --control-line: #887592;
   --focus: #c0ddf1;
   --error: #efb8ad;
   font-family: ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;
@@ -52,10 +53,10 @@ button:focus-visible,a:focus-visible,input:focus-visible,.screen:focus-visible {
 }
 
 .terminal {
-  width: min(1100px,100%);
-  height: min(760px,88vh);
-  height: min(760px,88svh);
-  min-height: 440px;
+  width: min(960px,100%);
+  height: min(560px,80vh);
+  height: min(560px,80svh);
+  min-height: 360px;
   display: flex;
   flex-direction: column;
   border: 1px solid var(--line);
@@ -65,7 +66,7 @@ button:focus-visible,a:focus-visible,input:focus-visible,.screen:focus-visible {
 }
 
 .bar {
-  min-height: 96px;
+  min-height: 84px;
   flex: none;
   display: flex;
   flex-direction: column;
@@ -81,7 +82,7 @@ button:focus-visible,a:focus-visible,input:focus-visible,.screen:focus-visible {
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding: 30px 30px 20px;
+  padding: 24px 28px 20px;
   scrollbar-width: thin;
   scrollbar-color: var(--line) transparent;
 }
@@ -197,7 +198,11 @@ form {
   display: flex;
   align-items: center;
   gap: 11px;
-  min-height: 44px;
+  min-height: 48px;
+  padding: 3px 3px 3px 10px;
+  border: 1px solid var(--control-line);
+  border-radius: 4px;
+  background: var(--canvas);
   cursor: text;
 }
 
@@ -222,6 +227,7 @@ input {
 }
 
 form:focus-within {
+  border-color: var(--focus);
   outline: 1px solid var(--focus);
   outline-offset: 3px;
 }
@@ -270,6 +276,20 @@ form:focus-within {
 .toolbar button:hover {
   color: var(--blue);
   background: var(--raised);
+}
+
+.toolbar .show-commands {
+  min-height: 44px;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  background: var(--raised);
+  color: var(--blue);
+  font-size: .875rem;
+  line-height: 1.4;
+}
+
+.toolbar .show-commands:hover {
+  border-color: var(--control-line);
 }
 
 .keys button {
@@ -593,13 +613,6 @@ form:focus-within {
   line-height: 1.4;
 }
 
-.prompt-hint {
-  margin: 0;
-  color: var(--muted);
-  font-size: .7rem;
-  line-height: 1.5;
-}
-
 .initial-document {
   font-size: .95rem;
   line-height: 1.7;
@@ -610,21 +623,16 @@ form:focus-within {
   margin: 0;
 }
 
+.initial-document p + p {
+  margin-top: .75rem;
+}
+
 .terminal.compact .site-name {
   font-size: 1.2rem;
 }
 
 .terminal.compact .site-status {
   font-size: .7rem;
-}
-
-/* The inline hint is text, not another full-size toolbar key. */
-.toolbar .prompt-hint .inline-command {
-  min-height: 0;
-  min-width: 0;
-  padding: 0;
-  font: inherit;
-  border-radius: 0;
 }
 
 /* Tablets can use the wide layout while still needing generous touch targets. */

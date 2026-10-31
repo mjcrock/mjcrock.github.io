@@ -109,8 +109,10 @@ Mobile sizing accounts for safe areas and the visual viewport, preserves layout
 during pinch zoom, and coalesces resize events into one animation frame. CSS
 provides the fallback when the visual viewport API is unavailable. Large default
 fonts, short landscape layouts, coarse pointers, and forced colors are supported.
-The owner masthead and visitor `guest` prompt are distinct. The normal hint is
-exactly “Type help for commands.” Help lists commands without a keyboard essay.
+The owner masthead and visitor `guest` prompt are distinct. The command row has
+a visible boundary before focus. “Show commands” opens help directly without
+focusing the input, and has a full-size touch target. The desktop frame is
+compact with a stable prompt and scrollable output. Help lists commands without a keyboard essay.
 Error hints contain clickable commands that fill and focus the input without
 running it. Help uses `[path]` for optional paths and `cat path` for its required
 file argument.

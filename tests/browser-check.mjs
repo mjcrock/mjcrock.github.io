@@ -27,9 +27,13 @@ try {
       const input = page.locator('#command');
       const run = async value => { await input.fill(value); await input.press('Enter'); };
       assert.equal(await page.locator('.site-name').textContent(), 'Michael J. Crockett');
-      assert.equal(await page.locator('#keyboard-help').innerText(), 'Type help for commands.');
+      const showCommands = page.getByRole('button', {name: 'Show commands', exact: true});
+      await showCommands.waitFor();
       assert.equal(await page.locator('.echo').count(), 0);
       assert.equal(await page.evaluate(() => document.activeElement === document.body), true);
+      await showCommands.click();
+      assert.equal(await page.locator('.help-list').count(), 1, 'Show commands opens help in one click');
+      assert.equal(await page.locator('.block').last().evaluate(node => node === document.activeElement), true);
       await run('cat README.md');
       assert.equal(await page.locator('.block').last().locator('pre').textContent(), source);
       assert.equal(page.url(), url);
@@ -71,6 +75,12 @@ try {
         assert.equal(await page.locator('#completion-panel').evaluate(node => node.getBoundingClientRect().bottom <= document.querySelector('.entry').getBoundingClientRect().top + 1), true);
         assert.equal(await page.locator('.toolbar').evaluate(node => node.getBoundingClientRect().bottom <= document.querySelector('.terminal').getBoundingClientRect().bottom), true);
         await input.press('Escape');
+        const helpBounds = await showCommands.boundingBox();
+        assert.ok(helpBounds.width >= 44 && helpBounds.height >= 44, `${engine} help target ${width}x${height}`);
+        await showCommands.click();
+        assert.equal(await page.locator('.block').last().locator('.help-list').count(), 1);
+        assert.equal(await input.evaluate(node => node === document.activeElement), false, 'Browsing help does not focus the keyboard input');
+        assert.deepEqual(await input.boundingBox(), before, 'Showing help keeps the command row stationary');
       }
       await page.goto(url + '#/missing');
       await page.locator('.error').last().waitFor();
