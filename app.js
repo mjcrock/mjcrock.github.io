@@ -6,6 +6,7 @@ const $ = id => document.getElementById(id);
 const output = $('output');
 const screen = $('screen');
 const form = $('command-form');
+const runButton = form.querySelector('.run');
 const input = $('command');
 const prompt = $('prompt');
 const suggestions = $('completions');
@@ -13,6 +14,8 @@ const completionPanel = $('completion-panel');
 const completionStatus = $('completion-status');
 const announcement = $('announcement');
 const terminal = document.querySelector('.terminal');
+const toolsToggle = $('tools-toggle');
+const toolbar = $('command-tools');
 const snakePlayer = createSnakePlayer(window, visible => terminal.classList.toggle('snake-active', !visible));
 // The build supplies the readable document. Retain it when output is cleared.
 const readme = output.firstElementChild.cloneNode(true);
@@ -38,7 +41,14 @@ const announce = message => { announcement.textContent = message; };
 const modified = event => event.isComposing || event.ctrlKey || event.metaKey || event.altKey || event.shiftKey;
 const updatePrompt = () => { prompt.textContent = `guest:${displayPath()} $`; };
 
+function setTools(open) {
+  if (terminal.classList.contains('tools-open') === open) return;
+  terminal.classList.toggle('tools-open', open);
+  toolsToggle.setAttribute('aria-expanded', String(open));
+}
+
 function hideSuggestions() {
+  if (completionPanel.hidden) return;
   completionPanel.hidden = true;
   suggestions.hidden = true;
   suggestions.replaceChildren();
@@ -50,6 +60,7 @@ function hideSuggestions() {
 }
 
 function fillCommand(value) {
+  setTools(false);
   snakePlayer.finish();
   input.value = value;
   completionAttempted = false;
@@ -211,11 +222,12 @@ function rememberDocument(path) {
 function run(raw, mode = 'typed') {
   snakePlayer.finish();
   if (typeof raw !== 'string' || !raw.trim()) return;
+  setTools(false);
   hideSuggestions();
   completionAttempted = false;
   const prefix = `guest:${displayPath()} $ `;
   const result = session.submit(raw);
-  input.value = '';
+  if (mode === 'typed') input.value = '';
   updatePrompt();
   showResult(result, prefix, raw, mode);
   const linked = result.kind === 'file' ? rememberDocument(result.path) : rememberCurrentCwd();
@@ -254,6 +266,7 @@ function acceptChoice(index = selectedChoice) {
 }
 
 function complete() {
+  setTools(false);
   snakePlayer.finish();
   const options = completions(input.value, session.cwd);
   hideSuggestions();
@@ -300,9 +313,9 @@ form.addEventListener('click', event => {
   }
   focusInput();
 });
-input.addEventListener('beforeinput', () => snakePlayer.finish());
-input.addEventListener('input', () => { snakePlayer.finish(); completionAttempted = false; hideSuggestions(); });
-input.addEventListener('compositionstart', () => { snakePlayer.finish(); composing = true; });
+input.addEventListener('beforeinput', () => { setTools(false); snakePlayer.finish(); });
+input.addEventListener('input', () => { setTools(false); snakePlayer.finish(); completionAttempted = false; hideSuggestions(); });
+input.addEventListener('compositionstart', () => { setTools(false); snakePlayer.finish(); composing = true; });
 input.addEventListener('compositionend', () => { composing = false; });
 input.addEventListener('keydown', event => {
   snakePlayer.finish();
@@ -333,11 +346,40 @@ input.addEventListener('keydown', event => {
 terminal.addEventListener('click', event => {
   const button = event.target.closest('button');
   if (!button || !terminal.contains(button)) return;
+  if (button === toolsToggle) {
+    if (terminal.classList.contains('compact')) {
+      hideSuggestions();
+      setTools(toolsToggle.getAttribute('aria-expanded') !== 'true');
+    }
+    return;
+  }
+  if (toolbar.contains(button)) setTools(false);
   if (button.dataset.command !== undefined) run(button.dataset.command, 'browse');
   else if (button.dataset.recall !== undefined) {
     fillCommand(button.dataset.recall);
     announce(`Ready: ${input.value}. Press Enter to run.`);
   } else if (button.dataset.completion !== undefined) acceptChoice(Number(button.dataset.completion));
+});
+// Cancel focus on mousedown, not pointerdown: WebKit suppresses a touch click
+// when pointerdown is canceled. Keyboard focus navigation remains native.
+terminal.addEventListener('mousedown', event => {
+  const button = event.target.closest('button');
+  if (terminal.classList.contains('compact') && event.button === 0 && document.activeElement === input &&
+      (button === toolsToggle || (button && toolbar.contains(button)))) event.preventDefault();
+});
+document.addEventListener('click', event => {
+  if (!toolsToggle.contains(event.target) && !toolbar.contains(event.target)) setTools(false);
+});
+terminal.addEventListener('keydown', event => {
+  if (event.key !== 'Escape' || modified(event) || composing || event.keyCode === 229 ||
+      toolsToggle.getAttribute('aria-expanded') !== 'true') return;
+  event.preventDefault();
+  setTools(false);
+  if (toolbar.contains(document.activeElement)) toolsToggle.focus({preventScroll: true});
+});
+terminal.addEventListener('focusout', event => {
+  if (event.relatedTarget && event.relatedTarget !== toolsToggle && event.relatedTarget !== runButton &&
+      !toolbar.contains(event.relatedTarget)) setTools(false);
 });
 suggestions.addEventListener('keydown', event => {
   if (modified(event)) return;
@@ -358,6 +400,7 @@ function navigate(initial = false) {
   const cwd = navigationCwd(window.history.state, route.path);
   const signature = routeSignature(route, cwd);
   if (!initial && signature === lastNavigation) return;
+  setTools(false);
   snakePlayer.finish();
   lastNavigation = signature;
   session.cwd = cwd;
@@ -386,7 +429,9 @@ navigate(true);
 document.querySelector('.entry').hidden = false;
 
 // No initial autofocus. Resize preserves the reader's position, never the bottom.
-if (window.visualViewport) {
+{
+  const viewport = window.visualViewport;
+  const touch = window.matchMedia?.('(pointer:coarse)');
   let pending = false;
   const fit = () => {
     if (pending) return;
@@ -395,16 +440,30 @@ if (window.visualViewport) {
       pending = false;
       // Pinch zoom shrinks the visual viewport too. Preserve the layout so
       // magnification never masquerades as a keyboard opening or loses text.
-      if (visualViewport.scale && visualViewport.scale !== 1) return;
-      terminal.classList.toggle('compact', innerWidth <= 600 && visualViewport.height <= 420);
-      const height = innerWidth <= 600 ? `${visualViewport.height}px` : '';
+      if (viewport?.scale && viewport.scale !== 1) return;
+      const availableHeight = viewport?.height ?? innerHeight;
+      const mobile = innerWidth <= 600 || Boolean(touch?.matches);
+      const fontSize = mobile ? parseFloat(getComputedStyle(document.documentElement).fontSize) : 16;
+      const compact = mobile && availableHeight <= Math.max(440, 20 * fontSize);
+      if (compact && !terminal.classList.contains('compact') && toolbar.contains(document.activeElement)) {
+        hideSuggestions();
+        setTools(true);
+      }
+      terminal.classList.toggle('compact', compact);
+      document.body.classList.toggle('compact-terminal', compact);
+      if (!compact) {
+        setTools(false);
+        if (document.activeElement === toolsToggle) toolbar.querySelector('button').focus({preventScroll: true});
+      }
+      const height = mobile ? `${availableHeight}px` : '';
       if (terminal.style.getPropertyValue('--viewport-height') !== height) {
         if (height) terminal.style.setProperty('--viewport-height', height);
         else terminal.style.removeProperty('--viewport-height');
       }
     });
   };
-  visualViewport.addEventListener('resize', fit);
+  viewport?.addEventListener('resize', fit);
+  touch?.addEventListener?.('change', fit);
   window.addEventListener('resize', fit);
   fit();
 }

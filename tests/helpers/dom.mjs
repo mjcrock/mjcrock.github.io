@@ -8,7 +8,7 @@ import {renderIndex} from '../../scripts/update-readme.mjs';
  * It models the APIs the app uses and counts writes/reads. Real rendering,
  * focus defaults, accessibility trees, CSP, and mobile keyboards need browser QA.
  */
-export async function createApp({root = new URL('../../', import.meta.url), width = 1000, height = 800, viewport = true, hash = '', state = null, reducedMotion = false} = {}) {
+export async function createApp({root = new URL('../../', import.meta.url), width = 1000, height = 800, fontSize = 16, coarsePointer = false, viewport = true, hash = '', state = null, reducedMotion = false} = {}) {
   if (typeof root === 'string') root = pathToFileURL(root.endsWith('/') ? root : `${root}/`);
   const source = await readFile(new URL('app.js', root), 'utf8');
   const markup = await renderIndex(root);
@@ -174,6 +174,7 @@ export async function createApp({root = new URL('../../', import.meta.url), widt
   });
   document.documentElement = new Node('html');
   document.body = new Node('body');
+  document.append(document.documentElement);
   document.documentElement.append(document.body);
   document.activeElement = document.body;
   const make = (tag, id, parent, className = '') => {
@@ -224,6 +225,10 @@ export async function createApp({root = new URL('../../', import.meta.url), widt
   const prompt = make('span', 'prompt', form);
   prompt.textContent = 'guest:~ $';
   const input = make('input', 'command', form);
+  const toolsToggle = make('button', 'tools-toggle', form, 'tools-toggle');
+  toolsToggle.textContent = 'Tools';
+  toolsToggle.setAttribute('aria-expanded', 'false');
+  toolsToggle.setAttribute('aria-controls', 'command-tools');
   const runButton = make('button', '', form, 'run');
   const completionPanel = make('div', 'completion-panel', entry, 'completion-panel');
   completionPanel.hidden = true;
@@ -234,7 +239,7 @@ export async function createApp({root = new URL('../../', import.meta.url), widt
   input.setAttribute('role', 'combobox');
   input.setAttribute('aria-expanded', 'false');
   input.setAttribute('aria-controls', 'completions');
-  const toolbar = make('div', '', entry, 'toolbar');
+  const toolbar = make('div', 'command-tools', entry, 'toolbar');
   const shortcutsMarkup = markup.match(/<div class="shortcuts"[^>]*>([\s\S]*?)<\/div>/u)?.[1] ?? '';
   const shortcuts = [...shortcutsMarkup.matchAll(/<button[^>]+data-command="([^"]+)"[^>]*>/gu)].map(([, command]) => {
     const button = make('button', '', toolbar);
@@ -257,7 +262,9 @@ export async function createApp({root = new URL('../../', import.meta.url), widt
   window.document = document;
   const motion = new Node('media-query');
   motion.matches = reducedMotion;
-  window.matchMedia = () => motion;
+  const pointer = new Node('media-query');
+  pointer.matches = coarsePointer;
+  window.matchMedia = query => query === '(pointer:coarse)' ? pointer : motion;
   let now = 0, nextTimer = 0;
   const timers = new Map();
   window.performance = {now: () => now};
@@ -326,7 +333,8 @@ export async function createApp({root = new URL('../../', import.meta.url), widt
   window.location = location;
   window.history = history;
   const globals = {
-    document, window, location, history, visualViewport, innerWidth: width, console, __modules: modules,
+    document, window, location, history, visualViewport, innerWidth: width, innerHeight: height, console, __modules: modules,
+    getComputedStyle: node => ({fontSize: node === document.documentElement ? `${fontSize}px` : ''}),
     requestAnimationFrame(callback) {
       const id = ++nextFrame;
       metrics.framesScheduled++;
@@ -347,7 +355,7 @@ export async function createApp({root = new URL('../../', import.meta.url), widt
     return event;
   }
   return {
-    document, terminal, screen, output, announcement, form, input, prompt, suggestions, completionPanel, completionStatus, runButton, shortcuts, metrics, globals, location, history, window,
+    document, terminal, screen, output, announcement, form, input, prompt, suggestions, completionPanel, completionStatus, runButton, toolsToggle, toolbar, shortcuts, metrics, globals, location, history, window,
     navigateHash,
     selectText(value) { selectedText = value; },
     dispatch,
@@ -375,9 +383,11 @@ export async function createApp({root = new URL('../../', import.meta.url), widt
       now = end;
     },
     setReducedMotion(value) { motion.matches = value; dispatch(motion, 'change', {matches: value}); },
+    setCoarsePointer(value) { pointer.matches = value; dispatch(pointer, 'change', {matches: value}); },
     setHidden(value) { document.hidden = value; dispatch(document, 'visibilitychange'); },
     resize(newWidth, newHeight, scale = 1) {
       globals.innerWidth = newWidth;
+      globals.innerHeight = newHeight;
       visualViewport.height = newHeight;
       visualViewport.scale = scale;
       dispatch(visualViewport, 'resize');
