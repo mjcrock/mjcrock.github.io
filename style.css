@@ -587,13 +587,12 @@ body.mobile-terminal {
   width: min(960px, 100%);
   margin-inline: auto;
   height: calc(var(--viewport-height, 100dvh) - var(--page-inset-top) - var(--page-inset-bottom));
-  /* Output padding (16), form padding/borders (8), entry (17), frame (2). */
-  min-height: calc(5.1rem + var(--compact-input-height) + 43px);
+  /* One readable line, output padding (16), form (8), entry (17), frame (2). */
+  min-height: calc(1.7rem + var(--compact-input-height) + 43px);
 }
 .terminal.mobile.tools-open {
   /* Keep these properties local: inherited variables would restyle the transcript. */
-  min-height: max(calc(5.1rem + var(--compact-input-height) + 43px),
-    calc(1.7rem + var(--compact-input-height) + var(--tools-height) + 47px));
+  min-height: calc(1.7rem + var(--compact-input-height) + var(--tools-height) + 47px);
 }
 .terminal.mobile .bar {
   flex: 0 1 auto;
@@ -614,13 +613,14 @@ body.mobile-terminal {
   display: none;
 }
 .terminal.mobile .screen {
-  min-height: calc(5.1rem + 16px);
+  /* Preserve reading space during folds, but let it yield before the input moves. */
+  min-height: min(calc(5.1rem + 16px), max(0px, calc(100% - var(--compact-input-height) - 25px)));
   padding-block: 8px;
   overscroll-behavior: auto;
 }
 .terminal.mobile.tools-open .screen {
   /* Temporarily share reading space with one row of full-size controls. */
-  min-height: calc(1.7rem + 16px);
+  min-height: min(calc(1.7rem + 16px), max(0px, calc(100% - var(--compact-input-height) - var(--tools-height) - 29px)));
 }
 .terminal.mobile .entry {
   flex: 0 1 auto;

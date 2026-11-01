@@ -568,7 +568,7 @@ test('a partial or missing native pan cannot leave the input permanently behind 
   }
 });
 
-test('a visible partial pan stays stable, but a later taller keyboard releases the anchor even if its bottom is unchanged', async () => {
+test('a taller keyboard releases the anchor only when the input would be covered', async () => {
   for (const laterOffset of [370, 410]) {
     const app = await ready({width: 390, height: 650});
     touchFocus(app);
@@ -581,9 +581,71 @@ test('a visible partial pan stays stable, but a later taller keyboard releases t
     assert.equal(app.metrics.heightWrites, 0); assert.equal(app.metrics.offsetWrites, 0);
     assert.equal(app.metrics.geometryReads, 1); assert.equal(app.pendingTimers, 0);
     app.panVisualViewport(220, laterOffset); app.flushFrame();
-    assert.equal(app.terminal.style.getPropertyValue('--viewport-height'), '220px', 'A later taller keyboard must not rely on input geometry measured before minimum-height constraints change');
+    assert.equal(app.terminal.style.getPropertyValue('--viewport-height'), laterOffset === 370 ? '220px' : '240px',
+      'A visible input keeps its position even when a larger keyboard leaves less output space');
     assert.equal(app.metrics.geometryReads, 1, 'Later reports need no extra layout measurement');
   }
+});
+
+test('small viewport fluctuations after settling cannot move a visible native focus target', async () => {
+  const app = await ready({width: 390, height: 650});
+  touchFocus(app); app.change('steady draft'); app.screen.scrollTop = 37;
+  app.panVisualViewport(260, 389); app.flushFrame();
+  app.advanceTime(1000); app.flushFrame();
+  const timers = app.metrics.timersScheduled;
+  app.resetMetrics();
+  for (const height of [258, 261, 258, 260, 257, 260]) {
+    app.globals.visualViewport.height = height;
+    app.dispatch(app.globals.visualViewport, 'resize'); app.flushFrame();
+    assert.equal(app.terminal.style.getPropertyValue('--viewport-height'), '261px');
+    assert.equal(app.terminal.style.marginTop, '389px');
+    assert.equal(app.document.activeElement, app.input);
+    assert.equal(app.input.value, 'steady draft'); assert.equal(app.screen.scrollTop, 37);
+  }
+  assert.equal(app.metrics.heightWrites, 0); assert.equal(app.metrics.offsetWrites, 0);
+  assert.equal(app.metrics.geometryReads, 0); assert.equal(app.metrics.scrollWrites, 0);
+  assert.equal(app.metrics.focusCalls.length, 0);
+  assert.equal(app.metrics.timersScheduled, timers); assert.equal(app.pendingTimers, 0);
+  assert.equal(app.pendingFrames, 0);
+});
+
+test('fractional document scrolling does not discard an already visible partial-pan anchor', async () => {
+  const app = await ready({width: 390, height: 650});
+  touchFocus(app); app.panVisualViewport(260, 370); app.flushFrame();
+  app.advanceTime(1000); app.flushFrame();
+  const timers = app.metrics.timersScheduled;
+  app.resetMetrics();
+  for (const scroll of [.5, 1, .25, 0]) {
+    app.window.scrollY = scroll;
+    app.dispatch(app.globals.visualViewport, 'scroll'); app.flushFrame();
+    assert.equal(app.terminal.style.getPropertyValue('--viewport-height'), '280px');
+    assert.equal(app.terminal.style.marginTop, '370px');
+  }
+  assert.equal(app.metrics.heightWrites, 0); assert.equal(app.metrics.offsetWrites, 0);
+  assert.equal(app.metrics.geometryReads, 0); assert.equal(app.metrics.scrollWrites, 0);
+  assert.equal(app.metrics.timersScheduled, timers); assert.equal(app.pendingTimers, 0);
+});
+
+test('visibility uses document coordinates when native page scrolling reveals or covers the input', async () => {
+  const app = await ready({width: 390, height: 650});
+  app.window.scrollY = 100;
+  touchFocus(app); app.panVisualViewport(260, 270); app.flushFrame();
+  app.advanceTime(1000); app.flushFrame();
+  assert.equal(app.terminal.style.getPropertyValue('--viewport-height'), '380px',
+    'The native page scroll already reveals the input, so its layout position stays anchored');
+  assert.equal(app.metrics.geometryReads, 1);
+  app.resetMetrics();
+  app.window.scrollY = 98;
+  app.dispatch(app.globals.visualViewport, 'scroll'); app.flushFrame();
+  assert.equal(app.terminal.style.getPropertyValue('--viewport-height'), '380px');
+  app.window.scrollY = 0;
+  app.dispatch(app.globals.visualViewport, 'scroll'); app.flushFrame();
+  assert.equal(app.terminal.style.getPropertyValue('--viewport-height'), '260px',
+    'A genuinely covered input gets the measured-height fallback');
+  assert.equal(app.terminal.style.marginTop, '270px');
+  assert.equal(app.metrics.heightWrites, 1); assert.equal(app.metrics.offsetWrites, 0);
+  assert.equal(app.metrics.geometryReads, 0); assert.equal(app.metrics.scrollWrites, 0);
+  assert.equal(app.metrics.focusCalls.length, 0); assert.equal(app.pendingTimers, 0);
 });
 
 test('an early scrollend cannot terminate the keyboard handoff while its partial pan is still unfolding', async () => {
@@ -675,16 +737,13 @@ test('backgrounding cancels the handoff timer and returning fits the current vie
   assert.equal(app.pendingTimers, 0); assert.equal(app.pendingFrames, 0);
 });
 
-test('native resizing, document scrolling and reduced motion release the touch handoff immediately', async () => {
-  for (const change of ['native resize', 'document scroll', 'reduced motion']) {
+test('native resizing and reduced motion release the touch handoff immediately', async () => {
+  for (const change of ['native resize', 'reduced motion']) {
     const app = await ready({width: 390, height: 650});
     touchFocus(app); app.panVisualViewport(260, 0); app.flushFrame();
     assert.equal(app.terminal.style.getPropertyValue('--viewport-height'), '');
     if (change === 'native resize') app.resize(390, 260);
-    else if (change === 'document scroll') {
-      app.window.scrollY = 100;
-      app.dispatch(app.globals.visualViewport, 'scroll');
-    } else app.setReducedMotion(true);
+    else app.setReducedMotion(true);
     app.flushFrame();
     assert.equal(app.terminal.style.getPropertyValue('--viewport-height'), change === 'native resize' ? '' : '260px', change);
     assert.equal(app.terminal.classList.contains('compact'), true, change);

@@ -195,9 +195,14 @@ try {
         const line = parseFloat(getComputedStyle(node.querySelector('.initial-document')).lineHeight);
         const top = visualViewport?.offsetTop ?? 0;
         const bottom = top + (visualViewport?.height ?? innerHeight);
+        const frame = node.closest('.terminal'), frameRect = frame.getBoundingClientRect();
+        const entry = document.querySelector('.entry').getBoundingClientRect();
+        const input = document.querySelector('#command').getBoundingClientRect();
         return {
           lines: (rect.height - paddingTop - paddingBottom) / line,
           visibleLines: Math.max(0, Math.min(rect.bottom - paddingBottom, bottom) - Math.max(rect.top + paddingTop, top)) / line,
+          availableLines: Math.max(0, Math.min(entry.top, bottom) - Math.max(frameRect.top + parseFloat(getComputedStyle(frame).borderTopWidth), top) - paddingTop - paddingBottom) / line,
+          inputVisible: input.top >= top && input.bottom <= bottom,
           pageScrolls: document.documentElement.scrollHeight > innerHeight,
         };
       });
@@ -219,7 +224,9 @@ try {
           assert.ok(rect.width >= 44 && rect.height >= 44, 'Typing controls preserve full touch targets');
         }
         const space = await outputSpace();
-        assert.ok(space.visibleLines >= 3, `${engine} ${width}×${height}, ${fontSize}px text: ${space.visibleLines.toFixed(2)} visible output lines`);
+        assert.ok(space.visibleLines >= Math.min(3, space.availableLines) - .01, `${engine} ${width}×${height}, ${fontSize}px text: output uses the space above the controls`);
+        assert.equal(space.pageScrolls, false, 'A line-count preference cannot enlarge the page');
+        assert.equal(space.inputVisible, true, 'Larger text leaves the whole input visible');
         const before = await field.boundingBox();
         await tools.tap();
         assert.equal(await tools.getAttribute('aria-expanded'), 'true');
@@ -340,16 +347,52 @@ try {
         });
         await field.focus(); await frames(compact);
         const space = await outputSpace();
-        assert.ok(space.lines >= 3, 'Extreme text sizes retain readable output instead of clipping its container');
-        assert.equal(space.pageScrolls, true, 'Insufficient physical height falls back to normal page scrolling');
+        assert.ok(space.visibleLines >= Math.min(3, space.availableLines) - .01, 'Large text uses the available reading space without expanding the frame');
+        assert.ok(space.visibleLines >= 1, 'These short viewports still have room for a readable line');
+        assert.equal(space.pageScrolls, false, 'The output yields height before the input is pushed offscreen');
+        assert.equal(space.inputVisible, true);
+        assert.equal(await compact.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+      }
+      // Keep one readable line and full-size controls reachable by page scrolling
+      // when they cannot fit together, rather than shrinking text or touch targets.
+      for (const [width, height, fontSize, openTools] of [[320, 80, 32, false], [844, 100, 48, false], [390, 180, 32, true]]) {
+        await compact.setViewportSize({width, height});
+        await compact.goto(url); await compact.locator('.entry').waitFor();
+        await compact.evaluate(size => {
+          document.documentElement.style.fontSize = `${size}px`;
+          window.dispatchEvent(new Event('resize'));
+        }, fontSize);
+        await field.fill('draft with enlarged text'); await frames(compact);
+        if (openTools) { await tools.tap(); await frames(compact); }
+        assert.equal((await outputSpace()).pageScrolls, true, 'Insufficient room for one line and controls retains page scrolling');
+        assert.equal(await field.evaluate(node => parseFloat(getComputedStyle(node).fontSize)), fontSize);
+        const controls = [tools, compact.locator('.run')];
+        if (openTools) controls.push(...await toolbar.locator('button').all());
+        for (const control of controls) {
+          const rect = await control.boundingBox();
+          assert.ok(rect.width >= 44 && rect.height >= 44, 'The scrolling escape never shrinks touch targets');
+        }
         assert.equal(await compact.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
         await compact.evaluate(() => window.scrollTo(0, 0));
-        assert.ok(await compact.locator('.screen').evaluate(node => node.getBoundingClientRect().top >= 0));
+        assert.ok((await outputSpace()).visibleLines >= 1, 'Scrolling to output reveals a complete line even at the smallest height');
+        assert.equal(await compact.locator('.screen').evaluate(node => {
+          node.scrollTop = node.scrollHeight;
+          return node.scrollTop > 0;
+        }), true, 'The reading region can scroll through all enlarged content');
         await compact.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
         assert.ok(await field.evaluate(node => {
           const rect = node.getBoundingClientRect();
           return rect.top >= 0 && rect.bottom <= innerHeight;
         }), 'The full-size input remains reachable by scrolling');
+        if (openTools) {
+          assert.equal(await tools.getAttribute('aria-expanded'), 'true');
+          for (const control of controls) assert.equal(await control.evaluate(node => {
+            const rect = node.getBoundingClientRect();
+            return rect.top >= 0 && rect.bottom <= innerHeight;
+          }), true, 'Scrolling to the controls reveals the full toolbar and input controls');
+        }
+        assert.equal(await field.inputValue(), 'draft with enlarged text');
+        assert.equal(await field.evaluate(node => document.activeElement === node), true, 'Page and output scrolling preserve typing focus');
       }
       for (const [width, height, fontSize, isCompact] of [
         [320, 421, 20, true], [320, 441, 20, false],
@@ -492,13 +535,19 @@ try {
       await pan(260, 390);
       assert.equal(await panning.locator('.screen').evaluate(node => node.getAnimations().length), 0);
       await pan(650, 0); await revealWhilePanning('after keyboard closing');
-      // With very large text and little height, normal document scrolling must
-      // still reach the input. Following pageTop instead would chase the reader.
+      // Large text first yields output height, preserving a visible input.
       await panning.evaluate(() => { document.documentElement.style.fontSize = '32px'; });
       await pan(180, 470);
+      assert.equal(await typing.evaluate(node => {
+        const rect = node.getBoundingClientRect();
+        return rect.top >= visualViewport.offsetTop && rect.bottom <= visualViewport.offsetTop + visualViewport.height;
+      }), true, 'Output yields before the panned input is pushed below the keyboard');
+      // Below one readable line plus controls, native document scrolling must
+      // still reach the input. Following pageTop instead would chase the reader.
+      await pan(80, 570);
       await panning.evaluate(() => {
         window.scrollTo(0, 100);
-        panViewport(180, 470, 'scroll');
+        panViewport(80, 570, 'scroll');
       });
       await frames(panning);
       const scrolled = await panning.evaluate(() => {
@@ -507,7 +556,7 @@ try {
           visible: input.top >= visualViewport.offsetTop && input.bottom <= visualViewport.offsetTop + visualViewport.height};
       });
       assert.ok(scrolled.scroll > 0, 'Oversized text retains document scrolling');
-      assert.equal(scrolled.margin, '470px', 'Frame compensation ignores document scrolling');
+      assert.equal(scrolled.margin, '570px', 'Frame compensation ignores document scrolling');
       assert.equal(scrolled.visible, true, 'Scrolling can bring the oversized layout input into view');
       await panning.evaluate(() => { document.documentElement.style.fontSize = ''; window.scrollTo(0, 0); });
       await panning.setViewportSize({width: 1280, height: 900}); await pan(900, 0);
