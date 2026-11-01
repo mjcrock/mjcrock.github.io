@@ -73,7 +73,9 @@ test('rendering has no HTML execution, storage, or runtime fetch', () => {
   const source = app + engine + routing;
   assert.doesNotMatch(source, /\.innerHTML|\.outerHTML|insertAdjacentHTML|document\.write|\beval\s*\(|new Function\b/);
   assert.doesNotMatch(source, /XMLHttpRequest|WebSocket|sendBeacon|localStorage|sessionStorage|document\.cookie/);
-  assert.doesNotMatch(source, /\bfetch\s*\(|AbortController|setTimeout|readMarkdown/);
+  assert.doesNotMatch(source, /\bfetch\s*\(|AbortController|readMarkdown/);
+  // The keyboard handoff has one bounded timeout, covered by lifecycle tests.
+  assert.doesNotMatch(source, /\bsetInterval\s*\(/);
   assert.match(app, /textContent/);
   assert.match(app, /createTextNode/);
 });
