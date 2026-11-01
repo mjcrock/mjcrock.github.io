@@ -66,8 +66,11 @@ button:focus-visible,a:focus-visible,input:focus-visible,.screen:focus-visible {
 }
 
 .bar {
-  min-height: 84px;
   flex: none;
+}
+
+.bar-content {
+  min-height: 84px;
   display: flex;
   flex-direction: column;
   align-items: flex-start;
@@ -88,6 +91,7 @@ button:focus-visible,a:focus-visible,input:focus-visible,.screen:focus-visible {
   padding: 24px 28px 20px;
   scrollbar-width: thin;
   scrollbar-color: var(--line) transparent;
+  scrollbar-gutter: stable;
 }
 
 .inline-command {
@@ -384,7 +388,7 @@ form:focus-within {
     width: 100%;
     box-shadow: none;
   }
-  .bar {
+  .bar-content {
     min-height: 84px;
     padding: 12px 16px;
     font-size: .76rem;
@@ -494,7 +498,7 @@ form:focus-within {
     height: calc(100dvh - var(--page-inset-top) - var(--page-inset-bottom));
     min-height: 180px;
   }
-  .bar {
+  .bar-content {
     min-height: 64px;
     padding-block: 8px;
   }
@@ -558,73 +562,81 @@ form:focus-within {
   overflow-wrap: anywhere;
 }
 
-/* Reserve reading space. If it cannot fit, let the page scroll. */
-body.compact-terminal {
+/* Keep mobile geometry stable while the keyboard changes the visible area. */
+body.mobile-terminal {
   --page-gap: 8px;
+  display: block;
+  min-height: 100dvh;
 }
-.terminal.compact {
+.terminal.mobile {
   --compact-input-height: max(44px, 1.5rem);
   --tools-height: max(44px, 1.225rem);
-  align-self: start;
+  width: min(960px, 100%);
+  margin-inline: auto;
   height: calc(var(--viewport-height, 100dvh) - var(--page-inset-top) - var(--page-inset-bottom));
   /* Output padding (16), form padding/borders (8), entry (17), frame (2). */
   min-height: calc(5.1rem + var(--compact-input-height) + 43px);
 }
-.terminal.compact.tools-open {
+.terminal.mobile.tools-open {
   /* Keep these properties local: inherited variables would restyle the transcript. */
   min-height: max(calc(5.1rem + var(--compact-input-height) + 43px),
     calc(1.7rem + var(--compact-input-height) + var(--tools-height) + 47px));
 }
-.terminal.compact .bar,.terminal.compact .prompt {
+.terminal.mobile .bar {
+  flex: 0 1 auto;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: 1fr;
+  overflow: hidden;
+}
+.terminal.mobile .bar-clip,.terminal.mobile .tools-clip {
+  min-height: 0;
+  overflow: hidden;
+}
+.terminal.mobile.compact .bar {
+  grid-template-rows: 0fr;
+  opacity: 0;
+}
+.terminal.mobile .prompt {
   display: none;
 }
-.terminal.compact .screen {
+.terminal.mobile .screen {
   min-height: calc(5.1rem + 16px);
   padding-block: 8px;
   overscroll-behavior: auto;
 }
-.terminal.compact.tools-open .screen {
+.terminal.mobile.tools-open .screen {
   /* Temporarily share reading space with one row of full-size controls. */
   min-height: calc(1.7rem + 16px);
 }
-/* Soften the layout handoff without moving the input or delaying viewport sizing. */
-@media(prefers-reduced-motion:no-preference) {
-  .terminal.compact .screen {
-    animation: compact-settle 160ms ease-out;
-  }
-  @keyframes compact-settle {
-    from {
-      opacity: .92;
-      transform: translateY(-4px);
-    }
-    to {
-      opacity: 1;
-      transform: none;
-    }
-  }
-}
-.terminal.compact .entry {
+.terminal.mobile .entry {
+  flex: 0 1 auto;
   display: flex;
   flex-direction: column;
   min-width: 0;
+  min-height: calc(var(--compact-input-height) + 25px);
   padding: 8px;
 }
-.terminal.compact input {
+.terminal.mobile form {
+  flex: none;
+}
+.terminal.mobile input {
   height: var(--compact-input-height);
 }
-.terminal.compact .run {
+.terminal.mobile .run {
   min-width: 44px;
   height: var(--compact-input-height);
   border: 0;
 }
-.terminal.compact input:focus-visible {
+.terminal.mobile input:focus-visible {
   outline: none;
 }
-.terminal.compact form:focus-within {
+.terminal.mobile form:focus-within {
   outline-offset: 0;
 }
-.terminal.compact .tools-toggle {
+.terminal.mobile .tools-toggle {
   display: block;
+  visibility: hidden;
   flex: none;
   min-width: 44px;
   min-height: 44px;
@@ -635,9 +647,41 @@ body.compact-terminal {
   font-size: .875rem;
   line-height: 1.4;
 }
-.terminal.compact .toolbar {
-  display: none;
+.terminal.mobile.compact .tools-toggle {
+  visibility: visible;
+}
+.terminal.mobile .tools-shell {
   order: -1;
+  min-height: 0;
+  flex-shrink: 1;
+  display: grid;
+  grid-template-rows: 1fr;
+}
+.terminal.mobile.compact:not(.tools-open) .tools-shell {
+  grid-template-rows: 0fr;
+  visibility: hidden;
+}
+.terminal.mobile.tools-open .tools-shell,.terminal.mobile .tools-shell:focus-within {
+  grid-template-rows: 1fr;
+  visibility: visible;
+}
+/* Fold only the small chrome regions. The viewport and caret never lag behind
+   the keyboard, and native CSS reversal handles an interrupted transition. */
+@media(prefers-reduced-motion:no-preference) {
+  .terminal.mobile .bar,.terminal.mobile .tools-shell {
+    transition: grid-template-rows 180ms ease-out, opacity 120ms ease-out;
+  }
+  .terminal.mobile .tools-shell:focus-within {
+    transition: none;
+  }
+}
+@media(prefers-reduced-motion:reduce) {
+  .terminal.mobile .bar,.terminal.mobile .tools-shell {
+    transition: none;
+  }
+}
+.terminal.mobile .toolbar {
+  display: flex;
   flex-wrap: nowrap;
   justify-content: flex-start;
   gap: 4px;
@@ -645,10 +689,7 @@ body.compact-terminal {
   overflow-x: auto;
   scrollbar-width: none;
 }
-.terminal.compact.tools-open .toolbar {
-  display: flex;
-}
-.terminal.compact .toolbar button {
+.terminal.mobile .toolbar button {
   flex: none;
   min-height: var(--tools-height);
   padding: 0 6px;
@@ -657,30 +698,30 @@ body.compact-terminal {
   line-height: 1.4;
   white-space: nowrap;
 }
-.terminal.compact .toolbar button:focus-visible {
+.terminal.mobile .toolbar button:focus-visible {
   outline-offset: -2px;
 }
-.terminal.compact .keys {
+.terminal.mobile .keys {
   gap: 0;
   margin-left: 0;
 }
-.terminal.compact .keys button {
+.terminal.mobile .keys button {
   min-width: 44px;
 }
-.terminal.compact .keys span,.terminal.compact .wide-label {
+.terminal.mobile .keys span,.terminal.compact .wide-label {
   display: none;
 }
 .terminal.compact .compact-label {
   display: inline;
 }
-.terminal.compact .tools-toggle[aria-expanded="true"],
-.terminal.compact .tools-toggle:hover,.terminal.compact .toolbar button:hover {
+.terminal.mobile .tools-toggle[aria-expanded="true"],
+.terminal.mobile .tools-toggle:hover,.terminal.mobile .toolbar button:hover {
   background: var(--raised);
 }
-.terminal.compact .completion-panel {
+.terminal.mobile .completion-panel {
   max-height: min(12rem, calc(var(--viewport-height, 100dvh) - 80px));
 }
-.terminal.compact .focus-show:focus {
+.terminal.mobile .focus-show:focus {
   position: absolute;
   bottom: 100%;
   left: 8px;

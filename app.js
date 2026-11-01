@@ -361,11 +361,15 @@ terminal.addEventListener('click', event => {
   } else if (button.dataset.completion !== undefined) acceptChoice(Number(button.dataset.completion));
 });
 // Cancel focus on mousedown, not pointerdown: WebKit suppresses a touch click
-// when pointerdown is canceled. Keyboard focus navigation remains native.
+// when pointerdown is canceled. Input actions must not dismiss and reopen the
+// keyboard between pointer focus and click. Keyboard navigation remains native.
 terminal.addEventListener('mousedown', event => {
   const button = event.target.closest('button');
-  if (terminal.classList.contains('compact') && event.button === 0 && document.activeElement === input &&
-      (button === toolsToggle || (button && toolbar.contains(button)))) event.preventDefault();
+  if (!button || event.button !== 0 || document.activeElement !== input) return;
+  const editsInput = button === runButton || button.dataset.recall !== undefined || button.dataset.completion !== undefined ||
+    (toolbar.contains(button) && button.dataset.command === undefined);
+  const compactTool = terminal.classList.contains('compact') && (button === toolsToggle || toolbar.contains(button));
+  if (editsInput || compactTool) event.preventDefault();
 });
 document.addEventListener('click', event => {
   if (!toolsToggle.contains(event.target) && !toolbar.contains(event.target)) setTools(false);
@@ -425,45 +429,56 @@ function navigate(initial = false) {
 }
 window.addEventListener('popstate', () => navigate());
 window.addEventListener('hashchange', () => navigate());
-navigate(true);
-document.querySelector('.entry').hidden = false;
 
 // No initial autofocus. Resize preserves the reader's position, never the bottom.
 {
   const viewport = window.visualViewport;
   const touch = window.matchMedia?.('(pointer:coarse)');
   let pending = false;
+  const applyViewport = () => {
+    pending = false;
+    // Pinch zoom shrinks the visual viewport too. Preserve the layout so
+    // magnification never masquerades as a keyboard opening or loses text.
+    if (viewport?.scale && viewport.scale !== 1) return;
+    const availableHeight = viewport?.height ?? innerHeight;
+    const mobile = innerWidth <= 600 || Boolean(touch?.matches);
+    const fontSize = mobile ? parseFloat(getComputedStyle(document.documentElement).fontSize) : 16;
+    const compact = mobile && availableHeight <= Math.max(440, 20 * fontSize);
+    if (compact && !terminal.classList.contains('compact') && toolbar.contains(document.activeElement)) {
+      hideSuggestions();
+      setTools(true);
+    }
+    terminal.classList.toggle('compact', compact);
+    terminal.classList.toggle('mobile', mobile);
+    document.body.classList.toggle('mobile-terminal', mobile);
+    if (!compact) {
+      setTools(false);
+      if (document.activeElement === toolsToggle) toolbar.querySelector('button').focus({preventScroll: true});
+    }
+    const height = mobile ? `${availableHeight}px` : '';
+    if (terminal.style.getPropertyValue('--viewport-height') !== height) {
+      if (height) terminal.style.setProperty('--viewport-height', height);
+      else terminal.style.removeProperty('--viewport-height');
+    }
+    // A phone keyboard can pan the visual viewport without scrolling the page.
+    // Follow that pan in normal flow, but never follow the reader's page scroll.
+    const top = mobile
+      ? Math.max(0, Math.min(viewport?.offsetTop ?? 0, innerHeight - availableHeight)) : 0;
+    const margin = top ? `${top}px` : '';
+    if (terminal.style.marginTop !== margin) terminal.style.marginTop = margin;
+  };
   const fit = () => {
     if (pending) return;
     pending = true;
-    requestAnimationFrame(() => {
-      pending = false;
-      // Pinch zoom shrinks the visual viewport too. Preserve the layout so
-      // magnification never masquerades as a keyboard opening or loses text.
-      if (viewport?.scale && viewport.scale !== 1) return;
-      const availableHeight = viewport?.height ?? innerHeight;
-      const mobile = innerWidth <= 600 || Boolean(touch?.matches);
-      const fontSize = mobile ? parseFloat(getComputedStyle(document.documentElement).fontSize) : 16;
-      const compact = mobile && availableHeight <= Math.max(440, 20 * fontSize);
-      if (compact && !terminal.classList.contains('compact') && toolbar.contains(document.activeElement)) {
-        hideSuggestions();
-        setTools(true);
-      }
-      terminal.classList.toggle('compact', compact);
-      document.body.classList.toggle('compact-terminal', compact);
-      if (!compact) {
-        setTools(false);
-        if (document.activeElement === toolsToggle) toolbar.querySelector('button').focus({preventScroll: true});
-      }
-      const height = mobile ? `${availableHeight}px` : '';
-      if (terminal.style.getPropertyValue('--viewport-height') !== height) {
-        if (height) terminal.style.setProperty('--viewport-height', height);
-        else terminal.style.removeProperty('--viewport-height');
-      }
-    });
+    requestAnimationFrame(applyViewport);
   };
   viewport?.addEventListener('resize', fit);
+  viewport?.addEventListener('scroll', fit);
   touch?.addEventListener?.('change', fit);
   window.addEventListener('resize', fit);
-  fit();
+  // Expose controls only after their initial geometry is ready. A fast first
+  // command must not be revealed against a layout that changes next frame.
+  applyViewport();
 }
+document.querySelector('.entry').hidden = false;
+navigate(true);

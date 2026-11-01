@@ -19,8 +19,12 @@
 <body>
   <main class="terminal" aria-label="Michael J. Crockett’s website">
     <header class="bar">
-      <h1 class="site-name">Michael J. Crockett</h1>
-      <p class="site-status">Site in progress</p>
+      <div class="bar-clip">
+        <div class="bar-content">
+          <h1 class="site-name">Michael J. Crockett</h1>
+          <p class="site-status">Site in progress</p>
+        </div>
+      </div>
     </header>
     <div class="screen" id="screen" role="region" tabindex="0" aria-label="Terminal output, scroll to review previous commands">
 <!-- BEGIN GENERATED README -->
@@ -38,12 +42,16 @@
         <p id="completion-status" class="completion-status"></p>
         <div id="completions" class="completions" role="listbox" hidden aria-label="Completion choices"></div>
       </div>
-      <div class="toolbar" id="command-tools">
-        <button type="button" data-command="help" class="show-commands" aria-label="Show commands"><span class="wide-label">Show commands</span><span class="compact-label" aria-hidden="true">Commands</span></button>
-        <div class="keys">
-          <button type="button" id="complete" aria-label="Complete command or path" title="Complete command or path">⇥<span> complete</span></button>
-          <button type="button" id="previous" aria-label="Previous command" title="Previous command">↑</button>
-          <button type="button" id="next" aria-label="Next command" title="Next command">↓</button>
+      <div class="tools-shell">
+        <div class="tools-clip">
+          <div class="toolbar" id="command-tools">
+            <button type="button" data-command="help" class="show-commands" aria-label="Show commands"><span class="wide-label">Show commands</span><span class="compact-label" aria-hidden="true">Commands</span></button>
+            <div class="keys">
+              <button type="button" id="complete" aria-label="Complete command or path" title="Complete command or path">⇥<span> complete</span></button>
+              <button type="button" id="previous" aria-label="Previous command" title="Previous command">↑</button>
+              <button type="button" id="next" aria-label="Next command" title="Next command">↓</button>
+            </div>
+          </div>
         </div>
       </div>
       <button type="button" id="read-output" class="sr-only focus-show">Read command output</button>

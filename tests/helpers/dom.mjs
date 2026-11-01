@@ -19,7 +19,7 @@ export async function createApp({root = new URL('../../', import.meta.url), widt
     modules[name] = await import(new URL(`${name}.js`, root).href);
   }
   if (!modules.engine) throw new Error('Update harness for changed app import structure.');
-  const metrics = {listeners: 0, geometryReads: 0, scrollWrites: 0, heightWrites: 0, framesScheduled: 0, timersScheduled: 0, focusCalls: []};
+  const metrics = {listeners: 0, geometryReads: 0, scrollWrites: 0, heightWrites: 0, offsetWrites: 0, framesScheduled: 0, timersScheduled: 0, focusCalls: []};
   const frames = new Map();
   let nextFrame = 0;
   let serial = 0;
@@ -67,6 +67,7 @@ export async function createApp({root = new URL('../../', import.meta.url), widt
         get: (target, key) => target[key] ?? '',
         set: (target, key, value) => {
           if (key === 'height') metrics.heightWrites++;
+          if (key === 'marginTop') metrics.offsetWrites++;
           target[key] = value;
           return true;
         },
@@ -260,6 +261,7 @@ export async function createApp({root = new URL('../../', import.meta.url), widt
   make('button', 'read-output', entry);
   const visualViewport = new Node('viewport');
   visualViewport.height = height;
+  Object.defineProperty(visualViewport, 'offsetTop', {value: 0, writable: true});
   visualViewport.scale = 1;
   const window = new Node('window');
   window.document = document;
@@ -396,8 +398,15 @@ export async function createApp({root = new URL('../../', import.meta.url), widt
       dispatch(visualViewport, 'resize');
       dispatch(window, 'resize');
     },
+    panVisualViewport(height, offsetTop, scale = 1) {
+      visualViewport.height = height;
+      visualViewport.offsetTop = offsetTop;
+      visualViewport.scale = scale;
+      dispatch(visualViewport, 'resize');
+      dispatch(visualViewport, 'scroll');
+    },
     resetMetrics() {
-      for (const key of ['geometryReads', 'scrollWrites', 'heightWrites', 'framesScheduled']) metrics[key] = 0;
+      for (const key of ['geometryReads', 'scrollWrites', 'heightWrites', 'offsetWrites', 'framesScheduled']) metrics[key] = 0;
       metrics.focusCalls.length = 0;
     },
   };
