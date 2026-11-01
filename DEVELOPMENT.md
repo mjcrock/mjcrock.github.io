@@ -84,7 +84,7 @@ screen-reader or phone verification.
 - `scripts/build.mjs`: deployment staging with content-versioned asset URLs.
 - `scripts/serve.mjs`: local preview server shared by the browser checks.
 - `favicon.svg`: the single authored icon, with an opaque plum background.
-- `scripts/icons.mjs`: build/preview renderer for the 64px favicon and 180px Apple icon.
+- `scripts/icons.mjs`: build/preview renderer for the 192px favicon and 180px Apple icon.
 - `package.json` and `package-lock.json`: pinned build tooling, never deployed.
 
 The page renders from six runtime assets: HTML, CSS and four JavaScript modules.
@@ -113,6 +113,14 @@ exits; arrows select, Enter accepts without running, and Escape preserves the
 draft. Unique completion has no visible success banner; choices and no-match
 feedback overlay the output above the stationary prompt. Without choices arrows
 recall history. Modified/IME keys remain untouched.
+The viewport requests `interactive-widget=resizes-content` so supporting browsers
+can resize the page with the keyboard. When the visual and layout heights agree
+within one pixel, native CSS viewport units own the frame height without a
+JavaScript override. Browsers that resize only the visual viewport retain the
+measured-height fallback. This is progressive enhancement, not a guarantee of
+support in any particular iPhone browser. WebKit can report keyboard geometry
+before or after its native animation; desktop emulation cannot verify that timing.
+No guessed keyboard duration, focus-based height prediction, or polling is added.
 Mobile sizing accounts for safe areas and the visual viewport, preserves layout
 during pinch zoom, and coalesces viewport resize and pan events into one animation
 frame. CSS
@@ -190,6 +198,8 @@ history use the existing limits.
 Edit `favicon.svg` to change the icon. Deployment generates `favicon.png` and
 `apple-touch-icon.png` from that source with the locked `@resvg/resvg-js` renderer.
 Both PNGs are part of the staged site and share its content-versioned URLs.
+The standard favicon is 192px so it also meets high-density browser icon requests
+(Brave on iOS can require at least 96 pixels for a 32-point icon at 3× scale).
 Do not create or commit PNG copies in the source folder. Local preview uses the
 same renderer and reflects SVG edits on the next icon request. Ordinary PNG links
 support browser interfaces that cannot use an SVG or data-URL favicon; a saved

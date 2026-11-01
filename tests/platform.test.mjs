@@ -6,6 +6,17 @@ import {renderIndex} from '../scripts/update-readme.mjs';
 const read = path => readFileSync(new URL(path, import.meta.url), 'utf8');
 const html = await renderIndex();
 
+test('the viewport requests native keyboard resizing while retaining zoom and safe-area support', () => {
+  const content = html.match(/<meta name="viewport" content="([^"]+)">/)[1];
+  const directives = new Map(content.split(',').map(part => part.trim().split('=')));
+  assert.equal(directives.get('interactive-widget'), 'resizes-content');
+  assert.equal(directives.get('width'), 'device-width');
+  assert.equal(directives.get('initial-scale'), '1');
+  assert.equal(directives.get('viewport-fit'), 'cover');
+  assert.equal(directives.has('user-scalable'), false);
+  assert.equal(directives.has('maximum-scale'), false);
+});
+
 test('preload hints cover the entry module dependencies exactly once', () => {
   const imports = [...read('../app.js').matchAll(/from ['"]\.\/([^'"]+)['"]/g)]
     .map(match => match[1]).sort();

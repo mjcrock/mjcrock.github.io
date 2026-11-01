@@ -34,7 +34,7 @@ test('all runtime resources are local and exist; legacy stylesheet is removed', 
 });
 
 test('tab and Apple icons use explicit local PNG links with the intended sizes', () => {
-  assert.match(html, /<link rel="icon" type="image\/png" sizes="64x64" href="favicon\.png">/);
+  assert.match(html, /<link rel="icon" type="image\/png" sizes="192x192" href="favicon\.png">/);
   assert.match(html, /<link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon\.png">/);
   assert.doesNotMatch(html, /data:image\/svg\+xml/);
 });

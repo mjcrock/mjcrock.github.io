@@ -22,7 +22,8 @@ test('mobile controls have their final initial geometry before the first animati
   assert.equal(app.pendingFrames, 0);
   assert.equal(app.terminal.classList.contains('mobile'), true);
   assert.equal(app.terminal.classList.contains('compact'), true);
-  assert.equal(app.terminal.style.getPropertyValue('--viewport-height'), '260px');
+  assert.equal(app.terminal.style.getPropertyValue('--viewport-height'), '', 'Native viewport sizing remains owned by CSS');
+  assert.equal(app.metrics.heightWrites, 0);
   assert.equal(app.document.querySelector('.entry').hidden, false);
   assert.equal(app.document.activeElement, app.document.body);
 });
@@ -421,7 +422,7 @@ test('a command after clear reveals its own result immediately without deferred 
   assert.equal(app.metrics.scrollWrites, writes);
 });
 
-test('resize notifications coalesce and identical dimensions avoid height writes', async () => {
+test('native resize notifications coalesce without overriding CSS viewport sizing', async () => {
   const app = await ready();
   assert.equal(app.terminal.style.getPropertyValue('--viewport-height'), '');
   app.screen.scrollTop = 123;
@@ -430,23 +431,23 @@ test('resize notifications coalesce and identical dimensions avoid height writes
   assert.equal(app.pendingFrames, 1);
   assert.equal(app.metrics.heightWrites, 0);
   app.flushFrame();
-  assert.equal(app.terminal.style.getPropertyValue('--viewport-height'), '700px');
-  assert.equal(app.metrics.heightWrites, 1);
+  assert.equal(app.terminal.style.getPropertyValue('--viewport-height'), '');
+  assert.equal(app.metrics.heightWrites, 0);
   app.resize(500, 700);
   app.flushFrame();
-  assert.equal(app.metrics.heightWrites, 1);
+  assert.equal(app.metrics.heightWrites, 0);
   assert.equal(app.screen.scrollTop, 123);
   assert.equal(app.metrics.scrollWrites, 0);
   assert.equal(app.metrics.geometryReads, 0);
   app.resize(1000, 800);
   app.flushFrame();
   assert.equal(app.terminal.style.getPropertyValue('--viewport-height'), '');
-  assert.equal(app.metrics.heightWrites, 2);
+  assert.equal(app.metrics.heightWrites, 0);
 });
 
-test('viewport size passes to CSS for safe-area sizing; missing visualViewport is supported', async () => {
+test('native viewport sizing stays in CSS while missing visualViewport uses the window fallback', async () => {
   const mobile = await ready({width: 320, height: 100});
-  assert.equal(mobile.terminal.style.getPropertyValue('--viewport-height'), '100px');
+  assert.equal(mobile.terminal.style.getPropertyValue('--viewport-height'), '');
   const fallback = await ready({viewport: false});
   assert.equal(fallback.pendingFrames, 0);
   assert.equal(fallback.terminal.style.getPropertyValue('--viewport-height'), '');
@@ -457,6 +458,59 @@ test('viewport size passes to CSS for safe-area sizing; missing visualViewport i
   fallback.flushFrame();
   assert.equal(fallback.terminal.style.getPropertyValue('--viewport-height'), '250px');
   assert.equal(fallback.terminal.classList.contains('compact'), true);
+});
+
+test('viewport sizing transfers between native CSS and visual-only fallback without disturbing the reader', async () => {
+  const app = await ready({width: 390, height: 650});
+  app.input.focus(); app.change('unfinished command');
+  app.screen.scrollTop = 123;
+  app.resetMetrics();
+  for (const height of [260, 650]) {
+    app.resize(390, height); app.flushFrame();
+    assert.equal(app.terminal.style.getPropertyValue('--viewport-height'), '');
+    assert.equal(app.terminal.classList.contains('compact'), height === 260);
+  }
+  assert.equal(app.metrics.heightWrites, 0, 'Native keyboard resizing never writes a competing height');
+
+  app.panVisualViewport(260, 390); app.flushFrame();
+  assert.equal(app.terminal.style.getPropertyValue('--viewport-height'), '260px');
+  assert.equal(app.terminal.style.marginTop, '390px');
+  assert.equal(app.terminal.classList.contains('compact'), true);
+  assert.equal(app.metrics.heightWrites, 1);
+
+  app.resize(390, 260); app.flushFrame();
+  assert.equal(app.terminal.style.getPropertyValue('--viewport-height'), '', 'A native layout resize clears the fallback immediately');
+  assert.equal(app.terminal.style.marginTop, '', 'Native sizing rejects a stale visual pan');
+  assert.equal(app.terminal.classList.contains('compact'), true);
+  assert.equal(app.metrics.heightWrites, 2);
+  app.resize(390, 650); app.flushFrame();
+  assert.equal(app.terminal.style.getPropertyValue('--viewport-height'), '');
+  assert.equal(app.terminal.classList.contains('compact'), false);
+  assert.equal(app.metrics.heightWrites, 2);
+  assert.equal(app.input.value, 'unfinished command');
+  assert.equal(app.document.activeElement, app.input);
+  assert.equal(app.screen.scrollTop, 123);
+  assert.equal(app.metrics.focusCalls.length, 0);
+  assert.equal(app.metrics.scrollWrites, 0);
+  assert.equal(app.metrics.geometryReads, 0);
+  assert.equal(app.pendingTimers, 0);
+});
+
+test('viewport rounding within one pixel does not enable a competing height override', async () => {
+  const app = await ready({width: 390, height: 650});
+  for (const height of [649.5, 649, 650, 650.5, 651]) {
+    app.panVisualViewport(height, 0); app.flushFrame();
+    assert.equal(app.terminal.style.getPropertyValue('--viewport-height'), '', `${height}px uses native sizing`);
+  }
+  assert.equal(app.metrics.heightWrites, 0);
+  app.panVisualViewport(648.75, 0); app.flushFrame();
+  assert.equal(app.terminal.style.getPropertyValue('--viewport-height'), '648.75px');
+  assert.equal(app.metrics.heightWrites, 1);
+  app.panVisualViewport(649.25, 0); app.flushFrame();
+  assert.equal(app.terminal.style.getPropertyValue('--viewport-height'), '');
+  assert.equal(app.metrics.heightWrites, 2, 'Returning within rounding tolerance clears the fallback');
+  app.panVisualViewport(650, 0); app.flushFrame();
+  assert.equal(app.metrics.heightWrites, 2);
 });
 
 test('visual viewport resize and pan coalesce without disturbing typing or reader position', async () => {
@@ -557,7 +611,7 @@ test('pinch zoom preserves layout, draft and reader position; keyboard sizing re
   for (const scale of [1.5, 2, 3]) {
     app.resize(390, 650 / scale, scale);
     app.flushFrame();
-    assert.equal(app.terminal.style.getPropertyValue('--viewport-height'), '650px');
+    assert.equal(app.terminal.style.getPropertyValue('--viewport-height'), '');
     assert.equal(app.terminal.classList.contains('compact'), false);
     assert.equal(app.input.value, 'unfinished');
     assert.equal(app.screen.scrollTop, 79);
@@ -565,7 +619,7 @@ test('pinch zoom preserves layout, draft and reader position; keyboard sizing re
   assert.equal(app.metrics.heightWrites, 0);
   app.resize(390, 300);
   app.flushFrame();
-  assert.equal(app.terminal.style.getPropertyValue('--viewport-height'), '300px');
+  assert.equal(app.terminal.style.getPropertyValue('--viewport-height'), '');
   assert.equal(app.terminal.classList.contains('compact'), true);
 });
 
@@ -945,7 +999,7 @@ test('compact layout allows more reading space when text is enlarged', async () 
     assert.equal(app.terminal.classList.contains('compact'), compact, `${height}px with enlarged text`);
     assert.equal(app.terminal.classList.contains('mobile'), true, 'Keyboard height never switches the mobile frame');
     assert.equal(app.document.body.classList.contains('mobile-terminal'), true);
-    assert.equal(app.terminal.style.getPropertyValue('--viewport-height'), `${height}px`);
+    assert.equal(app.terminal.style.getPropertyValue('--viewport-height'), '');
     assert.equal(app.input.value, 'unfinished command');
     assert.equal(app.document.activeElement, app.input);
     assert.equal(app.screen.scrollTop, 123);
@@ -971,13 +1025,13 @@ test('wide touch screens receive keyboard sizing while fine-pointer desktops ret
   assert.equal(app.terminal.classList.contains('compact'), true);
   assert.equal(app.terminal.classList.contains('mobile'), true);
   assert.equal(app.document.body.classList.contains('mobile-terminal'), true);
-  assert.equal(app.terminal.style.getPropertyValue('--viewport-height'), '220px');
+  assert.equal(app.terminal.style.getPropertyValue('--viewport-height'), '');
   app.resize(844, 700);
   app.flushFrame();
   assert.equal(app.terminal.classList.contains('compact'), false);
   assert.equal(app.terminal.classList.contains('mobile'), true, 'Closing the keyboard retains the wide touch frame');
   assert.equal(app.document.body.classList.contains('mobile-terminal'), true);
-  assert.equal(app.terminal.style.getPropertyValue('--viewport-height'), '700px');
+  assert.equal(app.terminal.style.getPropertyValue('--viewport-height'), '');
   app.setCoarsePointer(false);
   app.flushFrame();
   assert.equal(app.terminal.style.getPropertyValue('--viewport-height'), '');

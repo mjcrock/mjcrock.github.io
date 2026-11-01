@@ -457,7 +457,11 @@ window.addEventListener('hashchange', () => navigate());
       setTools(false);
       if (document.activeElement === toolsToggle) toolbar.querySelector('button').focus({preventScroll: true});
     }
-    const height = mobile ? `${availableHeight}px` : '';
+    // Let native viewport sizing drive the keyboard movement where supported.
+    // Only compensate when the visual viewport differs from the layout viewport
+    // (allowing one pixel of rounding), or when the API is unavailable.
+    const height = mobile && (!viewport || Math.abs(availableHeight - innerHeight) > 1)
+      ? `${availableHeight}px` : '';
     if (terminal.style.getPropertyValue('--viewport-height') !== height) {
       if (height) terminal.style.setProperty('--viewport-height', height);
       else terminal.style.removeProperty('--viewport-height');
