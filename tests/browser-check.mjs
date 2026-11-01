@@ -35,6 +35,8 @@ try {
         return sizes;
       });
       assert.deepEqual(icons, [[64, 64], [180, 180]], 'Generated icons decode under the site CSP');
+      const frame = await page.locator('.terminal').boundingBox();
+      assert.deepEqual([frame.width, frame.height], [960, 560], 'Fine-pointer desktop frame stays unchanged');
       const input = page.locator('#command');
       const run = async value => { await input.fill(value); await input.press('Enter'); };
       const openTools = async () => {
@@ -363,111 +365,242 @@ try {
       await compact.evaluate(() => { document.documentElement.style.fontSize = ''; });
       await compact.setViewportSize({width: 1280, height: 900}); await frames(compact);
       const desktop = await compact.locator('.terminal').boundingBox();
-      assert.deepEqual([desktop.width, desktop.height], [960, 560], 'Desktop frame dimensions remain unchanged');
+      assert.deepEqual([desktop.width, desktop.height], [960, 884], 'Wide touch layouts keep the same frame before and after keyboard use');
       assert.equal(await tools.isHidden(), true);
       assert.equal(await compact.locator('.bar').isVisible(), true);
       assert.equal(await compact.getByRole('button', {name: 'Show commands', exact: true}).isVisible(), true);
       await compact.close();
 
-      const settling = await browser.newPage({hasTouch: true, reducedMotion: 'no-preference'});
-      settling.on('pageerror', error => errors.push(String(error)));
-      await settling.addInitScript(() => {
-        window.settleProbe = {starts: 0, ends: 0};
-        document.addEventListener('animationstart', event => {
-          if (event.animationName !== 'compact-settle') return;
-          settleProbe.starts++;
-          settleProbe.animation = event.target.getAnimations().find(animation => animation.animationName === event.animationName);
-          settleProbe.animation.pause();
-          settleProbe.animation.currentTime = 0;
-        });
-        document.addEventListener('animationend', event => { if (event.animationName === 'compact-settle') settleProbe.ends++; });
+      // Phone keyboards can pan a smaller visual viewport without resizing the
+      // layout viewport. Whole-window resizing alone cannot exercise this path.
+      const panning = await browser.newPage({hasTouch: true, reducedMotion: 'no-preference'});
+      panning.on('pageerror', error => errors.push(String(error)));
+      await panning.addInitScript(() => {
+        const viewport = new EventTarget();
+        Object.assign(viewport, {height: innerHeight, offsetTop: 0, pageTop: 0, scale: 1});
+        Object.defineProperty(window, 'visualViewport', {value: viewport});
+        window.panViewport = (height, offsetTop, event = 'resize', scale = 1) => {
+          Object.assign(viewport, {height, offsetTop, scale, pageTop: scrollY + offsetTop});
+          viewport.dispatchEvent(new Event(event));
+        };
       });
-      for (const [width, height, fontSize] of [[320, 220, 16], [390, 260, 24], [390, 280, 32]]) {
-        await settling.setViewportSize({width, height: 800}); await settling.goto(url); await settling.locator('.entry').waitFor();
-        await settling.evaluate(size => {
-          document.documentElement.style.fontSize = `${size}px`;
+      const pan = async (height, offset, event = 'resize', scale = 1) => {
+        await panning.evaluate(args => panViewport(...args), [height, offset, event, scale]);
+        await frames(panning);
+      };
+      const typing = panning.locator('#command');
+      for (const [width, layoutHeight, openHeight, fontSize] of [
+        [320, 650, 220, 16], [390, 800, 260, 24], [390, 900, 280, 32], [844, 800, 300, 24],
+      ]) {
+        await panning.setViewportSize({width, height: layoutHeight});
+        await panning.goto(url); await panning.locator('.entry').waitFor();
+        await panning.evaluate(size => {
+          document.documentElement.style.fontSize = size + 'px';
           dispatchEvent(new Event('resize'));
         }, fontSize);
-        await frames(settling);
-        const typing = settling.locator('#command');
-        await typing.fill('unfinished command');
-        await settling.setViewportSize({width, height});
-        await settling.waitForFunction(() => settleProbe.animation?.playState === 'paused');
-        await settling.evaluate(() => settleProbe.animation.ready.then(() => undefined));
-        let inputBounds;
-        for (const progress of [0, .5, 1]) {
-          const sample = await settling.evaluate(progress => {
-            const animation = settleProbe.animation, timing = animation.effect.getTiming();
-            animation.currentTime = timing.duration * progress;
-            const screen = document.querySelector('.screen'), style = getComputedStyle(screen), rect = screen.getBoundingClientRect();
-            const entry = document.querySelector('.entry').getBoundingClientRect(), field = document.querySelector('#command');
-            const line = parseFloat(getComputedStyle(screen.querySelector('.initial-document')).lineHeight);
-            const top = Math.max(rect.top + parseFloat(style.paddingTop), visualViewport?.offsetTop ?? 0);
-            const bottom = Math.min(rect.bottom - parseFloat(style.paddingBottom), (visualViewport?.offsetTop ?? 0) + (visualViewport?.height ?? innerHeight));
-            return {duration: timing.duration, iterations: timing.iterations, input: field.getBoundingClientRect().toJSON(), focused: document.activeElement === field, draft: field.value, lines: (bottom - top) / line, overlap: rect.bottom > entry.top};
-          }, progress);
-          assert.ok(sample.duration > 0 && sample.duration <= 250 && sample.iterations === 1, 'Typing transition is brief and finite');
-          inputBounds ??= sample.input;
-          assert.deepEqual(sample.input, inputBounds, 'The real input stays stationary throughout the output animation');
-          assert.equal(sample.focused, true); assert.equal(sample.draft, 'unfinished command');
-          assert.ok(sample.lines >= 3, `${engine} animated output retains three readable lines at ${fontSize}px`);
-          assert.equal(sample.overlap, false, 'Animated output stays above the controls');
+        await typing.fill('help'); await typing.press('Enter');
+        await typing.fill('unfinished command'); await frames(panning);
+        const readerScroll = await panning.locator('.screen').evaluate(node => { node.scrollTop = 37; return node.scrollTop; });
+        // Either resize or scroll can deliver the latest viewport dimensions.
+        for (const height of [openHeight + 80, openHeight + 40, openHeight, openHeight + 40, openHeight + 80]) {
+          await pan(height, layoutHeight - height, height % 80 ? 'scroll' : 'resize');
+          const state = await panning.evaluate(() => {
+            const terminal = document.querySelector('.terminal'), screen = document.querySelector('.screen');
+            const field = document.querySelector('#command'), entry = document.querySelector('.entry').getBoundingClientRect();
+            const rect = screen.getBoundingClientRect(), style = getComputedStyle(screen);
+            const top = visualViewport.offsetTop, bottom = top + visualViewport.height;
+            return {
+              terminalTop: terminal.getBoundingClientRect().top - top,
+              inputVisible: field.getBoundingClientRect().top >= top && field.getBoundingClientRect().bottom <= bottom,
+              lines: (Math.min(bottom, rect.bottom - parseFloat(style.paddingBottom)) - Math.max(top, rect.top + parseFloat(style.paddingTop))) / parseFloat(getComputedStyle(screen.querySelector('.block')).lineHeight),
+              overlap: rect.bottom > entry.top, scroll: screen.scrollTop,
+              focused: document.activeElement === field, draft: field.value,
+              animations: screen.getAnimations().length,
+            };
+          });
+          assert.ok(Math.abs(state.terminalTop - 8) < 1, engine + ' frame follows visual viewport panning');
+          assert.equal(state.inputVisible, true, 'The full-size input stays inside the visible viewport');
+          assert.ok(state.lines >= 3, engine + ' panned viewport retains three readable lines at ' + fontSize + 'px');
+          assert.equal(state.overlap, false); assert.equal(state.scroll, readerScroll);
+          assert.equal(state.focused, true); assert.equal(state.draft, 'unfinished command');
+          assert.equal(state.animations, 0, 'Keyboard movement has no competing output animation');
         }
-        await settling.evaluate(async () => { settleProbe.animation.finish(); await settleProbe.animation.finished; });
-        await frames(settling);
-        await settling.locator('#tools-toggle').tap(); await typing.press('x'); await frames(settling);
-        assert.equal(await typing.inputValue(), 'unfinished commandx');
-        assert.deepEqual(await settling.evaluate(() => [settleProbe.starts, settleProbe.ends]), [1, 1], 'Typing and Tools do not replay the completed transition');
+        await pan(layoutHeight, 150); // Height can recover before the pan resets.
+        assert.equal(await panning.locator('.terminal').evaluate(node => node.style.marginTop), '');
+        await pan(layoutHeight, 0, 'scroll');
+        assert.equal(await typing.inputValue(), 'unfinished command');
       }
-      await settling.setViewportSize({width: 390, height: 650}); await settling.goto(url); await settling.locator('.entry').waitFor();
-      const movingInput = settling.locator('#command');
-      const revealDuringMotion = async phase => {
+      await panning.setViewportSize({width: 390, height: 650});
+      await panning.goto(url); await panning.locator('.entry').waitFor();
+      const revealWhilePanning = async phase => {
         // A tall result prevents the bottom scroll limit from hiding an offset error.
-        await movingInput.fill('x'.repeat(450)); await movingInput.press('Enter');
-        const result = await settling.locator('.block').last().evaluate(node => {
-          const screen = document.querySelector('.screen');
-          return {top: node.getBoundingClientRect().top - screen.getBoundingClientRect().top, scroll: screen.scrollTop};
-        });
-        assert.ok(result.scroll > 0, 'The reveal check exercises prior output and nonzero scrolling');
-        assert.ok(Math.abs(result.top - 12) < 1, `${engine} result aligns before/during/after motion (${phase}: ${result.top}px)`);
+        await typing.fill('x'.repeat(450)); await typing.press('Enter');
+        const result = await panning.locator('.block').last().evaluate(node => ({
+          top: node.getBoundingClientRect().top - document.querySelector('.screen').getBoundingClientRect().top,
+          scroll: document.querySelector('.screen').scrollTop,
+        }));
+        assert.ok(result.scroll > 0);
+        assert.ok(Math.abs(result.top - 12) < 1, engine + ' result reveal stays aligned ' + phase + ' (' + result.top + 'px)');
       };
-      await movingInput.fill('help'); await movingInput.press('Enter');
-      await revealDuringMotion('before');
-      await settling.setViewportSize({width: 390, height: 260});
-      await settling.waitForFunction(() => settleProbe.animation?.playState === 'paused');
-      await settling.evaluate(async () => {
-        await settleProbe.animation.ready;
-        settleProbe.animation.currentTime = settleProbe.animation.effect.getTiming().duration / 2;
+      await revealWhilePanning('before keyboard opening');
+      await pan(260, 390); await revealWhilePanning('with keyboard open');
+      await typing.fill('draft across zoom');
+      const beforeZoom = await panning.locator('.terminal').evaluate(node => node.style.cssText);
+      await pan(130, 520, 'scroll', 2);
+      assert.equal(await panning.locator('.terminal').evaluate(node => node.style.cssText), beforeZoom, 'Pinch zoom does not reposition or resize the frame');
+      await pan(300, 350, 'scroll');
+      assert.equal(await typing.inputValue(), 'draft across zoom');
+      await panning.emulateMedia({reducedMotion: 'reduce'});
+      await pan(260, 390);
+      assert.equal(await panning.locator('.screen').evaluate(node => node.getAnimations().length), 0);
+      await pan(650, 0); await revealWhilePanning('after keyboard closing');
+      // With very large text and little height, normal document scrolling must
+      // still reach the input. Following pageTop instead would chase the reader.
+      await panning.evaluate(() => { document.documentElement.style.fontSize = '32px'; });
+      await pan(180, 470);
+      await panning.evaluate(() => {
+        window.scrollTo(0, 100);
+        panViewport(180, 470, 'scroll');
       });
-      await revealDuringMotion('during');
-      const readerScroll = await settling.locator('.screen').evaluate(node => { node.scrollTop = 73; return node.scrollTop; });
-      assert.ok(readerScroll > 0);
-      await settling.evaluate(async () => { settleProbe.animation.finish(); await settleProbe.animation.finished; });
-      await frames(settling);
-      assert.equal(await settling.locator('.screen').evaluate(node => node.scrollTop), readerScroll, 'Finishing the transition does not overwrite a reader scroll');
-      await revealDuringMotion('after');
-      await settling.setViewportSize({width: 390, height: 650}); await frames(settling);
-      await settling.setViewportSize({width: 390, height: 260});
-      await settling.waitForFunction(() => settleProbe.starts === 2 && settleProbe.animation?.playState === 'paused');
-      await settling.evaluate(async () => {
-        await settleProbe.animation.ready;
-        settleProbe.animation.currentTime = settleProbe.animation.effect.getTiming().duration / 2;
+      await frames(panning);
+      const scrolled = await panning.evaluate(() => {
+        const input = document.querySelector('#command').getBoundingClientRect();
+        return {scroll: scrollY, margin: document.querySelector('.terminal').style.marginTop,
+          visible: input.top >= visualViewport.offsetTop && input.bottom <= visualViewport.offsetTop + visualViewport.height};
       });
-      await movingInput.fill('draft during motion');
-      await settling.emulateMedia({reducedMotion: 'reduce'}); await frames(settling);
-      assert.equal(await settling.locator('.screen').evaluate(node => node.getAnimations().length), 0, 'Enabling reduced motion cancels an active typing transition');
-      assert.equal(await settling.evaluate(() => settleProbe.animation.playState), 'idle');
-      assert.equal(await movingInput.inputValue(), 'draft during motion');
-      assert.equal(await movingInput.evaluate(node => document.activeElement === node), true);
-      await settling.setViewportSize({width: 390, height: 800}); await frames(settling);
-      await settling.emulateMedia({reducedMotion: 'reduce'});
-      await settling.setViewportSize({width: 390, height: 280}); await frames(settling);
-      assert.equal(await settling.locator('.screen').evaluate(node => node.getAnimations().length), 0, 'Reduced motion skips the typing transition');
-      await settling.setViewportSize({width: 1280, height: 900}); await frames(settling);
-      await settling.emulateMedia({reducedMotion: 'no-preference'}); await frames(settling);
-      assert.equal(await settling.locator('.screen').evaluate(node => node.getAnimations().length), 0, 'Desktop output has no typing animation');
-      assert.deepEqual(await settling.evaluate(() => [settleProbe.starts, settleProbe.ends]), [2, 1]);
-      await settling.close();
+      assert.ok(scrolled.scroll > 0, 'Oversized text retains document scrolling');
+      assert.equal(scrolled.margin, '470px', 'Frame compensation ignores document scrolling');
+      assert.equal(scrolled.visible, true, 'Scrolling can bring the oversized layout input into view');
+      await panning.evaluate(() => { document.documentElement.style.fontSize = ''; window.scrollTo(0, 0); });
+      await panning.setViewportSize({width: 1280, height: 900}); await pan(900, 0);
+      const normal = await panning.locator('.terminal').boundingBox();
+      assert.deepEqual([normal.width, normal.height], [960, 884]);
+      assert.equal(await panning.locator('.terminal').evaluate(node => node.style.marginTop), '');
+
+      // Exercise native pointer defaults, not only the DOM test model's clicks.
+      await panning.setViewportSize({width: 390, height: 900});
+      await panning.goto(url); await panning.locator('.entry').waitFor();
+      await typing.fill('pwd');
+      await panning.evaluate(() => {
+        window.inputBlurs = 0;
+        document.querySelector('#command').addEventListener('blur', () => inputBlurs++);
+      });
+      await panning.locator('.run').tap();
+      await typing.fill('bash'); await typing.press('Enter');
+      await panning.locator('[data-recall="help"]').tap();
+      await typing.fill('h'); await typing.press('Tab');
+      await panning.locator('#completions button').first().tap();
+      await typing.fill('history'); await typing.press('Enter');
+      await panning.locator('.history-list button').last().tap();
+      assert.equal(await panning.evaluate(() => inputBlurs), 0, 'Input actions never blur and refocus between pointer down and click');
+      await panning.getByRole('button', {name: 'Show commands', exact: true}).tap();
+      assert.equal(await panning.locator('.block').last().evaluate(node => document.activeElement === node), true, 'Browsing still intentionally focuses the result');
+
+      for (const [width, fontSize, openHeight] of [[390, 16, 260], [390, 24, 260], [320, 32, 280], [844, 24, 300]]) {
+        await panning.setViewportSize({width, height: 900});
+        await panning.goto(url); await panning.locator('.entry').waitFor();
+        await panning.emulateMedia({reducedMotion: 'no-preference'});
+        await panning.evaluate(size => { document.documentElement.style.fontSize = size + 'px'; dispatchEvent(new Event('resize')); }, fontSize);
+        for (let n = 0; n < 3; n++) { await typing.fill('x'.repeat(450)); await typing.press('Enter'); }
+        await typing.fill('steady draft');
+        const readerScroll = await panning.locator('.screen').evaluate(node => { node.scrollTop = 37; return node.scrollTop; });
+        const threshold = Math.max(440, 20 * fontSize);
+        // Both a one-pixel boundary crossing and a single, late keyboard report.
+        for (const [from, to] of [[threshold + 1, threshold], [900, openHeight], [openHeight, 900]]) {
+          await panning.emulateMedia({reducedMotion: 'reduce'}); await pan(from, 900 - from);
+          const stationary = await typing.boundingBox();
+          await panning.emulateMedia({reducedMotion: 'no-preference'});
+          await pan(to, 900 - to);
+          const animationCount = await panning.evaluate(() => {
+            window.folds = document.querySelector('.terminal').getAnimations({subtree: true});
+            for (const animation of folds) animation.pause();
+            return folds.length;
+          });
+          assert.ok(animationCount > 0 && animationCount <= 3, 'Only the small header and toolbar regions fold');
+          let previousHeader;
+          for (const progress of [0, .25, .5, .75, 1]) {
+            const state = await panning.evaluate(progress => {
+              for (const animation of folds) {
+                const timing = animation.effect.getTiming();
+                if (timing.duration > 200 || timing.iterations !== 1) throw new Error('Unbounded fold');
+                animation.currentTime = timing.duration * progress;
+              }
+              const field = document.querySelector('#command'), screen = document.querySelector('.screen');
+              const rect = screen.getBoundingClientRect(), style = getComputedStyle(screen);
+              const entry = document.querySelector('.entry').getBoundingClientRect();
+              return {input: field.getBoundingClientRect().toJSON(), header: document.querySelector('.bar').getBoundingClientRect().height,
+                scroll: screen.scrollTop, focus: document.activeElement === field, draft: field.value,
+                lines: (rect.height - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom)) / parseFloat(getComputedStyle(screen.querySelector('.initial-document')).lineHeight),
+                overlap: rect.bottom > entry.top + .5, pageScroll: scrollY};
+            }, progress);
+            assert.ok(Math.abs(state.input.x - stationary.x) < .5 && Math.abs(state.input.y - stationary.y) < .5, engine + ' caret stays stationary throughout fold');
+            assert.ok(Math.abs(state.input.width - stationary.width) < .5 && state.input.height >= 44);
+            assert.ok(state.input.top >= 900 - to && state.input.bottom <= 900, 'An abrupt keyboard report cannot clip the input');
+            assert.ok(state.lines >= 3, 'Chrome yields to protected reading space even at the start of a fold');
+            assert.equal(state.overlap, false); assert.equal(state.focus, true); assert.equal(state.draft, 'steady draft');
+            assert.equal(state.scroll, readerScroll); assert.equal(state.pageScroll, 0);
+            if (previousHeader !== undefined) assert.ok(to < from ? state.header <= previousHeader + .5 : state.header >= previousHeader - .5, 'Header movement is monotonic');
+            previousHeader = state.header;
+          }
+          await panning.evaluate(() => { for (const animation of folds) animation.finish(); });
+          await frames(panning);
+          assert.equal(await panning.locator('.bar').isHidden(), to <= threshold, 'No partial heading remains at rest');
+        }
+        // Reverse an unfinished fold at the boundary instead of queuing another.
+        await panning.emulateMedia({reducedMotion: 'reduce'}); await pan(threshold + 1, 899 - threshold);
+        await panning.emulateMedia({reducedMotion: 'no-preference'}); await pan(threshold, 900 - threshold);
+        const halfway = await panning.evaluate(() => {
+          for (const animation of document.querySelector('.terminal').getAnimations({subtree: true})) {
+            animation.pause(); animation.currentTime = animation.effect.getTiming().duration / 2;
+          }
+          return document.querySelector('.bar').getBoundingClientRect().height;
+        });
+        const fixedInput = await typing.boundingBox();
+        await pan(threshold + 1, 899 - threshold);
+        const reversed = await panning.evaluate(() => {
+          const animations = document.querySelector('.terminal').getAnimations({subtree: true});
+          for (const animation of animations) { animation.pause(); animation.currentTime = 0; }
+          const height = document.querySelector('.bar').getBoundingClientRect().height;
+          for (const animation of animations) animation.finish();
+          return {height, count: animations.length};
+        });
+        assert.ok(Math.abs(reversed.height - halfway) < 1, 'A reversed fold starts from its current position');
+        assert.ok(reversed.count <= 3, 'Rapid direction changes do not accumulate animations');
+        assert.deepEqual(await typing.boundingBox(), fixedInput, 'Reversing motion does not move or resize the input');
+        await pan(openHeight, 900 - openHeight);
+        await panning.emulateMedia({reducedMotion: 'reduce'}); await frames(panning);
+        assert.equal(await panning.locator('.terminal').evaluate(node => node.getAnimations({subtree: true}).length), 0, 'Reduced motion cancels an in-flight fold');
+        const beforeTools = await typing.boundingBox();
+        await panning.locator('#tools-toggle').tap(); await frames(panning);
+        const afterTools = await typing.boundingBox();
+        assert.deepEqual(afterTools, beforeTools, 'Tools opens above the command without moving it');
+      }
+      await panning.close();
+      const deep = await browser.newPage({viewport: {width: 390, height: 260}, hasTouch: true, reducedMotion: 'reduce'});
+      await deep.route('**/', async route => {
+        const response = await route.fetch();
+        const opening = '<section class="initial-document" aria-label="README.md">';
+        const body = (await response.text()).replace(opening, opening + '<p>A longer public document exercises initial scrolling.</p>'.repeat(80));
+        await route.fulfill({response, body});
+      });
+      await deep.goto(url + '#/README.md'); await deep.locator('.entry').waitFor();
+      const firstView = await deep.locator('.block').evaluate(node => {
+        const screen = document.querySelector('.screen');
+        return {top: node.getBoundingClientRect().top - screen.getBoundingClientRect().top, scroll: screen.scrollTop, overflows: screen.scrollHeight > screen.clientHeight};
+      });
+      assert.equal(firstView.overflows, true, 'The initial deep-link fixture really needs scrolling');
+      assert.ok(firstView.top >= 0 && firstView.top <= 12, 'A first deep link is positioned using final mobile geometry');
+      assert.equal(firstView.scroll, 0, 'Startup cannot leave a delayed scroll correction');
+      await deep.close();
+
+      const scrollbars = await browser.newPage({viewport: {width: 1280, height: 900}});
+      await scrollbars.goto(url); await scrollbars.locator('.entry').waitFor();
+      const initialWidth = await scrollbars.locator('.screen').evaluate(node => node.clientWidth);
+      for (let i = 0; i < 3; i++) { await scrollbars.locator('#command').fill('help'); await scrollbars.locator('#command').press('Enter'); }
+      assert.equal(await scrollbars.locator('.screen').evaluate(node => node.scrollHeight > node.clientHeight), true);
+      assert.equal(await scrollbars.locator('.screen').evaluate(node => node.clientWidth), initialWidth, 'Overflow does not change the text column width');
+      assert.equal(await scrollbars.locator('.tools-clip').evaluate(node => getComputedStyle(node).overflow), 'visible', 'Desktop toolbar focus outlines are not clipped');
+      await scrollbars.close();
       await page.goto(url + '#/missing');
       await page.locator('.error').last().waitFor();
       assert.match(await page.locator('#output').textContent(), /not available/);

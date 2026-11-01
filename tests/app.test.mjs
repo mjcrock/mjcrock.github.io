@@ -17,6 +17,16 @@ const ready = async options => {
 };
 const button = (app, id) => app.document.getElementById(id);
 
+test('mobile controls have their final initial geometry before the first animation frame', async () => {
+  const app = await createApp({width: 390, height: 260});
+  assert.equal(app.pendingFrames, 0);
+  assert.equal(app.terminal.classList.contains('mobile'), true);
+  assert.equal(app.terminal.classList.contains('compact'), true);
+  assert.equal(app.terminal.style.getPropertyValue('--viewport-height'), '260px');
+  assert.equal(app.document.querySelector('.entry').hidden, false);
+  assert.equal(app.document.activeElement, app.document.body);
+});
+
 test('startup renders canonical README passively without fake commands, history, or autofocus', async () => {
   const app = await ready();
   assert.equal(app.output.children.length, 1);
@@ -449,6 +459,96 @@ test('viewport size passes to CSS for safe-area sizing; missing visualViewport i
   assert.equal(fallback.terminal.classList.contains('compact'), true);
 });
 
+test('visual viewport resize and pan coalesce without disturbing typing or reader position', async () => {
+  const app = await ready({width: 390, height: 650});
+  app.input.focus(); app.change('unfinished command');
+  app.screen.scrollTop = 123;
+  app.resetMetrics();
+  for (let index = 0; index < 50; index++) app.panVisualViewport(260, 390);
+  assert.equal(app.globals.innerHeight, 650, 'Keyboard panning need not resize the layout viewport');
+  assert.equal(app.pendingFrames, 1);
+  assert.equal(app.metrics.heightWrites, 0); assert.equal(app.metrics.offsetWrites, 0);
+  app.flushFrame();
+  assert.equal(app.terminal.style.getPropertyValue('--viewport-height'), '260px');
+  assert.equal(app.terminal.style.marginTop, '390px');
+  assert.equal(app.metrics.heightWrites, 1); assert.equal(app.metrics.offsetWrites, 1);
+  app.panVisualViewport(260, 390); app.flushFrame();
+  assert.equal(app.metrics.heightWrites, 1); assert.equal(app.metrics.offsetWrites, 1);
+  app.globals.visualViewport.offsetTop = 350;
+  app.dispatch(app.globals.visualViewport, 'scroll'); app.flushFrame();
+  assert.equal(app.terminal.style.marginTop, '350px', 'A pan-only event updates the frame position');
+  assert.equal(app.metrics.heightWrites, 1); assert.equal(app.metrics.offsetWrites, 2);
+  assert.equal(app.input.value, 'unfinished command');
+  assert.equal(app.document.activeElement, app.input);
+  assert.equal(app.screen.scrollTop, 123);
+  assert.equal(app.metrics.focusCalls.length, 0);
+  assert.equal(app.metrics.scrollWrites, 0); assert.equal(app.metrics.geometryReads, 0);
+  assert.equal(app.pendingTimers, 0);
+});
+
+test('viewport compensation follows native panning but does not chase document scrolling', async () => {
+  const app = await ready({width: 390, height: 650});
+  for (const [height, offset] of [[500, 150], [350, 300], [260, 390], [350, 300], [500, 150]]) {
+    app.panVisualViewport(height, offset); app.flushFrame();
+    assert.equal(Number.parseFloat(app.terminal.style.marginTop) + height, 650,
+      'The frame bottom stays at the native visual viewport bottom through opening and closing');
+  }
+  app.globals.visualViewport.pageTop = 270;
+  app.window.scrollY = 120;
+  app.globals.scrollY = 120;
+  app.resetMetrics();
+  app.dispatch(app.window, 'scroll');
+  app.dispatch(app.globals.visualViewport, 'scroll'); app.flushFrame();
+  assert.equal(app.terminal.style.marginTop, '150px');
+  assert.equal(app.metrics.offsetWrites, 0); assert.equal(app.metrics.scrollWrites, 0);
+  app.panVisualViewport(650, 150); app.flushFrame();
+  assert.equal(Number.parseFloat(app.terminal.style.marginTop) || 0, 0,
+    'Restored height rejects an offset left over from keyboard dismissal');
+  app.resetMetrics();
+  app.panVisualViewport(650, 0); app.flushFrame();
+  assert.equal(app.metrics.offsetWrites, 0);
+  app.panVisualViewport(260, -8); app.flushFrame();
+  assert.equal(Number.parseFloat(app.terminal.style.marginTop) || 0, 0, 'Overscroll does not pull the frame above its normal origin');
+  app.panVisualViewport(260, 800); app.flushFrame();
+  assert.equal(app.terminal.style.marginTop, '390px', 'Offset compensation stays within the layout viewport');
+});
+
+test('viewport panning respects pinch zoom, remains stable on wide touch screens and clears on desktop', async () => {
+  const app = await ready({width: 390, height: 650});
+  app.input.focus(); app.change('draft across zoom'); app.screen.scrollTop = 79;
+  app.panVisualViewport(260, 390); app.flushFrame(); app.resetMetrics();
+  app.panVisualViewport(130, 520, 2); app.flushFrame();
+  assert.equal(app.terminal.style.marginTop, '390px');
+  assert.equal(app.terminal.style.getPropertyValue('--viewport-height'), '260px');
+  assert.equal(app.metrics.heightWrites, 0); assert.equal(app.metrics.offsetWrites, 0);
+  app.panVisualViewport(300, 350); app.flushFrame();
+  assert.equal(app.terminal.style.marginTop, '350px');
+  app.resize(1280, 900); app.flushFrame();
+  assert.equal(app.terminal.style.marginTop, '');
+  assert.equal(app.terminal.style.getPropertyValue('--viewport-height'), '');
+  assert.equal(app.input.value, 'draft across zoom'); assert.equal(app.document.activeElement, app.input);
+  assert.equal(app.screen.scrollTop, 79); assert.equal(app.metrics.scrollWrites, 0);
+  assert.equal(app.metrics.focusCalls.length, 0);
+
+  const tablet = await ready({width: 844, height: 700, coarsePointer: true});
+  tablet.panVisualViewport(220, 480); tablet.flushFrame();
+  assert.equal(tablet.terminal.style.marginTop, '480px');
+  tablet.panVisualViewport(500, 200); tablet.flushFrame();
+  assert.equal(tablet.terminal.style.marginTop, '200px',
+    'Wide touch frames keep the same viewport positioning outside compact mode');
+  assert.equal(tablet.terminal.classList.contains('compact'), false);
+  assert.equal(tablet.terminal.classList.contains('mobile'), true);
+  assert.equal(tablet.document.body.classList.contains('mobile-terminal'), true);
+  tablet.panVisualViewport(220, 480); tablet.flushFrame();
+  tablet.setCoarsePointer(false); tablet.flushFrame();
+  assert.equal(tablet.terminal.style.marginTop, '');
+
+  const fallback = await ready({width: 390, height: 650, viewport: false});
+  fallback.panVisualViewport(260, 390); fallback.flushFrame();
+  assert.equal(Number.parseFloat(fallback.terminal.style.marginTop) || 0, 0);
+  assert.equal(fallback.terminal.style.getPropertyValue('--viewport-height'), '650px');
+});
+
 test('pinch zoom preserves layout, draft and reader position; keyboard sizing resumes at normal scale', async () => {
   const app = await ready({width: 390, height: 650});
   app.change('unfinished');
@@ -810,7 +910,8 @@ test('compact mode follows the visual viewport without changing the draft or rea
     app.resize(width, height);
     app.flushFrame();
     assert.equal(app.terminal.classList.contains('compact'), compact, `${width}x${height}`);
-    assert.equal(app.document.body.classList.contains('compact-terminal'), compact, `${width}x${height}`);
+    assert.equal(app.terminal.classList.contains('mobile'), width <= 600, `${width}x${height}`);
+    assert.equal(app.document.body.classList.contains('mobile-terminal'), width <= 600, `${width}x${height}`);
     assert.equal(app.input.value, 'unfinished command');
     assert.equal(app.screen.scrollTop, 123);
   }
@@ -828,7 +929,8 @@ test('compact layout allows more reading space when text is enlarged', async () 
     app.resize(390, height);
     app.flushFrame();
     assert.equal(app.terminal.classList.contains('compact'), compact, `${height}px with enlarged text`);
-    assert.equal(app.document.body.classList.contains('compact-terminal'), compact);
+    assert.equal(app.terminal.classList.contains('mobile'), true, 'Keyboard height never switches the mobile frame');
+    assert.equal(app.document.body.classList.contains('mobile-terminal'), true);
     assert.equal(app.terminal.style.getPropertyValue('--viewport-height'), `${height}px`);
     assert.equal(app.input.value, 'unfinished command');
     assert.equal(app.document.activeElement, app.input);
@@ -844,6 +946,8 @@ test('compact layout allows more reading space when text is enlarged', async () 
 test('wide touch screens receive keyboard sizing while fine-pointer desktops retain their layout', async () => {
   const app = await ready({width: 844, height: 220, fontSize: 32});
   assert.equal(app.terminal.classList.contains('compact'), false);
+  assert.equal(app.terminal.classList.contains('mobile'), false);
+  assert.equal(app.document.body.classList.contains('mobile-terminal'), false);
   assert.equal(app.terminal.style.getPropertyValue('--viewport-height'), '');
   app.input.focus();
   app.change('unfinished');
@@ -851,16 +955,20 @@ test('wide touch screens receive keyboard sizing while fine-pointer desktops ret
   app.setCoarsePointer(true);
   app.flushFrame();
   assert.equal(app.terminal.classList.contains('compact'), true);
-  assert.equal(app.document.body.classList.contains('compact-terminal'), true);
+  assert.equal(app.terminal.classList.contains('mobile'), true);
+  assert.equal(app.document.body.classList.contains('mobile-terminal'), true);
   assert.equal(app.terminal.style.getPropertyValue('--viewport-height'), '220px');
   app.resize(844, 700);
   app.flushFrame();
   assert.equal(app.terminal.classList.contains('compact'), false);
+  assert.equal(app.terminal.classList.contains('mobile'), true, 'Closing the keyboard retains the wide touch frame');
+  assert.equal(app.document.body.classList.contains('mobile-terminal'), true);
   assert.equal(app.terminal.style.getPropertyValue('--viewport-height'), '700px');
   app.setCoarsePointer(false);
   app.flushFrame();
   assert.equal(app.terminal.style.getPropertyValue('--viewport-height'), '');
-  assert.equal(app.document.body.classList.contains('compact-terminal'), false);
+  assert.equal(app.terminal.classList.contains('mobile'), false);
+  assert.equal(app.document.body.classList.contains('mobile-terminal'), false);
   assert.equal(app.input.value, 'unfinished');
   assert.equal(app.document.activeElement, app.input);
   assert.equal(app.metrics.focusCalls.length, 0);
@@ -926,7 +1034,42 @@ test('pointer activation of Tools keeps an existing input focus without blocking
   app.resize(1000, 800);
   app.flushFrame();
   app.input.focus();
-  assert.equal(app.dispatch(button(app, 'complete'), 'mousedown').defaultPrevented, false);
+  assert.equal(app.dispatch(button(app, 'complete'), 'mousedown').defaultPrevented, true,
+    'Input-retaining shortcuts preserve focus before compact mode and on desktop');
+  assert.equal(app.dispatch(app.document.querySelector('.show-commands'), 'mousedown').defaultPrevented, false,
+    'Normal browsing controls retain native pointer focus');
+});
+
+test('Run, recall and completion clicks do not blur a focused input before returning to it', async () => {
+  for (const [width, height] of [[390, 650], [390, 250], [1000, 800]]) {
+    const app = await ready({width, height});
+    app.submit('bash');
+    const recovery = app.output.lastElementChild.querySelector('button');
+    app.change('h'); app.key('Tab');
+    const choice = app.suggestions.firstElementChild;
+    const nested = app.document.createElement('span');
+    choice.append(nested);
+    app.resetMetrics();
+    for (const target of [app.runButton, recovery, nested]) {
+      assert.equal(app.dispatch(target, 'pointerdown').defaultPrevented, false, 'Touch click delivery remains native');
+      assert.equal(app.dispatch(target, 'mousedown').defaultPrevented, true, 'Pointer focus must not hide the keyboard');
+      assert.equal(app.dispatch(target, 'mousedown', {button: 2}).defaultPrevented, false);
+    }
+    assert.equal(app.document.activeElement, app.input);
+    assert.equal(app.metrics.focusCalls.length, 0, 'Focus retention requires no extra focus call');
+    assert.equal(app.input.value, 'h');
+    app.click(nested);
+    assert.equal(app.input.value, 'help');
+    assert.equal(app.document.activeElement, app.input);
+    app.click(recovery);
+    assert.equal(app.input.value, 'help');
+    app.screen.focus();
+    assert.equal(app.dispatch(app.runButton, 'mousedown').defaultPrevented, false,
+      'A user can still focus controls normally when the input is not active');
+    app.input.focus();
+    app.click(app.document.querySelector('.show-commands'));
+    assert.equal(app.document.activeElement, app.output.lastElementChild, 'Browsing help still moves focus to its result');
+  }
 });
 
 test('tool actions close the disclosure and retain their intended input or output focus', async () => {

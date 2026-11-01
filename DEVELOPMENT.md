@@ -114,25 +114,39 @@ draft. Unique completion has no visible success banner; choices and no-match
 feedback overlay the output above the stationary prompt. Without choices arrows
 recall history. Modified/IME keys remain untouched.
 Mobile sizing accounts for safe areas and the visual viewport, preserves layout
-during pinch zoom, and coalesces resize events into one animation frame. CSS
+during pinch zoom, and coalesces viewport resize and pan events into one animation
+frame. CSS
 sizes the output in proportion to text size, with window dimensions as the
 fallback when the visual viewport API is unavailable. Large default
 fonts, short landscape layouts, coarse pointers, and forced colors are supported.
-On narrow or touch-first screens with little available height, the header and full prompt give
-way to output and a single command row. Tools reveals a shallow row of commands,
+Narrow and touch-first screens keep the same frame width, padding, input size,
+and command-row position throughout keyboard movement. The mobile toolbar sits
+above the input, so opening or closing it cannot move the caret. With little
+available height, the header and toolbar fold away over 180ms. Only these small
+regions animate, never the viewport dimensions or frame position. The folds can
+reverse without timers and reduced motion skips them. If a browser reports a
+large height change at once, the folding regions shrink before the protected
+input and output space. Tools reveals a shallow row of commands,
 completion, and history above the input. It reserves its own space so output
 scrolls entirely above the controls. At extreme text sizes the toolbar can scroll
 horizontally instead of wrapping. Tapping these controls while
-typing preserves input focus until an action intentionally changes it. The
+typing preserves input focus until an action intentionally changes it. Run,
+completion choices, and recalled commands also preserve focus between pointer
+down and click, avoiding a keyboard dismissal followed by immediate reopening. The
 disclosure and completion panel never cover one another. Output reserves at
 least three text lines with Tools closed, or one while the controls are open.
 The page can scroll if enlarged text makes the whole interface taller than the
-visible area. Desktop layout is unchanged.
-Entering compact mode gives the output a brief CSS-only settle. Viewport sizing
-and input placement remain immediate, and reduced motion disables the effect.
-The output owns result-scroll coordinates so submitting during the transition
-reveals the same position as submitting afterward. Viewport-height updates stop
-at the output container instead of restyling its entire transcript.
+visible area. Fine-pointer desktop layout is unchanged. The output reserves a
+scrollbar gutter where classic scrollbars need space, avoiding text reflow when
+output begins or stops overflowing.
+When the keyboard pans the visual viewport, the frame follows its vertical offset
+with a normal-flow margin. It never follows document scrolling, so oversized
+layouts remain scrollable. The offset is bounded by the difference between layout
+and visual viewport heights and clears as the full height returns. The transcript
+has no transform or independent animation. The output owns result-scroll
+coordinates so submitting during viewport changes reveals a consistent position.
+Viewport-height updates stop at the output container instead of restyling its
+entire transcript.
 Compact mode retains the frame's flex layout, avoiding an intrinsic-size scan of
 the transcript when the keyboard changes the available height.
 Listing and history columns align their text baselines, including larger touch
