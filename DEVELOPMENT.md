@@ -149,9 +149,15 @@ Viewport-height updates stop at the output container instead of restyling its
 entire transcript.
 Compact mode retains the frame's flex layout, avoiding an intrinsic-size scan of
 the transcript when the keyboard changes the available height.
-Listing and history columns align their text baselines, including larger touch
-buttons and wrapped filenames. On narrow screens the help column follows text
-size, with a width cap that leaves room for descriptions.
+The masthead, output, prompt, and first toolbar label share one text inset.
+Control borders sit outside that inset, and the completion panel follows the
+input box. Explicit input padding and a one-character desktop prompt gap keep
+typed commands aligned with their echoes across browser defaults and text sizes.
+Help and file listings share font-relative columns, capped to leave room for
+descriptions. Listing text keeps the same line height in both columns, including
+wrapped filenames. History retains its shorter number column and shared baseline.
+Opened documents preserve the landing document's typography and touch-link
+spacing without adding another named region inside the command result.
 The compact-height threshold grows with the root text size, so larger text does
 not fall back to a cramped full layout just above the normal breakpoint. Opening
 help or browsing a document preserves an unfinished command. Closing an already

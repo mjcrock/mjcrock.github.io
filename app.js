@@ -134,7 +134,9 @@ function renderResult(parent, result) {
     link.href = documentHash(result.path);
     path.append(' · ', link);
     parent.append(path, element('h2', result.entry.title, 'file-title'));
-    parent.append(...Array.from(readme.childNodes, node => node.cloneNode(true)));
+    const content = readme.cloneNode(true);
+    content.removeAttribute('aria-label'); // The enclosing result already names the document.
+    parent.append(content);
   } else if (result.kind === 'cat') {
     readmeSource ??= JSON.parse(rawReadme);
     parent.append(element('pre', readmeSource, 'file-text'));

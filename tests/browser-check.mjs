@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import {pathToFileURL} from 'node:url';
 import {startServer} from '../scripts/serve.mjs';
+import {checkAlignment} from './alignment-check.mjs';
 
 const playwright = await import(process.env.PLAYWRIGHT_MODULE
   ? pathToFileURL(process.env.PLAYWRIGHT_MODULE).href : 'playwright');
@@ -17,6 +18,7 @@ try {
   for (const engine of engines) {
     const browser = await playwright[engine].launch({headless: true, timeout: 20000});
     try {
+      await checkAlignment(browser, url, engine);
       const page = await browser.newPage({viewport: {width: 1280, height: 900}, reducedMotion: 'reduce'});
       const errors = [], requests = [];
       page.on('pageerror', error => errors.push(String(error)));
