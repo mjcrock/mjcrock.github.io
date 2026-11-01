@@ -181,7 +181,7 @@ function showResult(result, prefix, raw, mode, showEcho = true) {
     if (result.kind === 'snake') snakePlayer.play(body.firstElementChild);
     while (output.children.length > LIMITS.output) output.firstElementChild.remove();
     // Reveal synchronously: a later reader scroll must never be overwritten.
-    screen.scrollTop = Math.max(0, block.offsetTop - screen.offsetTop - 12);
+    screen.scrollTop = Math.max(0, block.offsetTop - 12);
   }
   if (mode === 'typed') focusInput();
   else if (mode === 'browse' && block) block.focus({preventScroll: true});

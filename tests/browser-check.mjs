@@ -106,6 +106,43 @@ try {
         assert.deepEqual(await input.boundingBox(), before, 'Showing help keeps the command row stationary');
       }
 
+      const listing = await browser.newPage({viewport: {width: 390, height: 780}, hasTouch: true, reducedMotion: 'reduce'});
+      listing.on('pageerror', error => errors.push(String(error)));
+      await listing.goto(url); await listing.locator('.entry').waitFor();
+      await listing.locator('#command').fill('ls'); await listing.locator('#command').press('Enter');
+      await listing.locator('.listing-row').evaluate(row => {
+        const wrapped = row.cloneNode(true);
+        wrapped.querySelector('button').textContent = 'a-long-filename-that-wraps-across-several-lines.md';
+        wrapped.querySelector('span').textContent = 'A description that wraps onto several lines beside the filename.';
+        row.parentNode.append(wrapped);
+      });
+      await listing.locator('#command').fill('history'); await listing.locator('#command').press('Enter');
+      await listing.locator('.history-list li').last().evaluate(row => {
+        const wrapped = row.cloneNode(true);
+        wrapped.querySelector('button').textContent = 'a long recalled command that wraps onto several lines';
+        row.parentNode.append(wrapped);
+      });
+      for (const fontSize of [16, 24, 32]) {
+        await listing.evaluate(size => { document.documentElement.style.fontSize = `${size}px`; }, fontSize);
+        const rows = await listing.locator('.listing-row,.history-list li').evaluateAll(nodes => nodes.map(row => {
+          const text = node => {
+            const range = document.createRange();
+            range.selectNodeContents(node);
+            const lines = range.getClientRects().length;
+            range.setEnd(node.firstChild, 1);
+            return {top: range.getBoundingClientRect().top, lines};
+          };
+          return {name: text(row.firstElementChild), description: text(row.lastElementChild), height: row.querySelector('button').getBoundingClientRect().height};
+        }));
+        for (const row of rows) {
+          assert.ok(Math.abs(row.name.top - row.description.top) < .5, `${engine} listing/history text aligns at ${fontSize}px`);
+          assert.ok(row.height >= 44, 'Aligned filenames and recalled commands retain full touch targets');
+        }
+        assert.ok(rows[1].name.lines > 1 && rows[1].description.lines > 1, 'The alignment fixture exercises wrapping in both columns');
+        assert.ok(rows.at(-1).description.lines > 1, 'The history fixture exercises a wrapped command');
+      }
+      await listing.close();
+
       const compact = await browser.newPage({reducedMotion: 'reduce', hasTouch: true});
       const field = compact.locator('#command');
       const tools = compact.locator('#tools-toggle');
@@ -202,6 +239,13 @@ try {
           window.dispatchEvent(new Event('resize'));
         }, fontSize);
         await field.fill('help'); await field.press('Enter');
+        assert.equal(await compact.locator('.help-list dt').evaluateAll(nodes => nodes.every(node => {
+          const start = node.textContent.indexOf('[path]');
+          if (start < 0) return true;
+          const range = document.createRange();
+          range.setStart(node.firstChild, start); range.setEnd(node.firstChild, start + 6);
+          return range.getClientRects().length === 1;
+        })), true, 'Larger text keeps optional path arguments together');
         await field.fill('unfinished command'); await field.focus(); await frames(compact);
         const before = await field.boundingBox();
         await tools.tap(); await frames(compact);
@@ -324,6 +368,106 @@ try {
       assert.equal(await compact.locator('.bar').isVisible(), true);
       assert.equal(await compact.getByRole('button', {name: 'Show commands', exact: true}).isVisible(), true);
       await compact.close();
+
+      const settling = await browser.newPage({hasTouch: true, reducedMotion: 'no-preference'});
+      settling.on('pageerror', error => errors.push(String(error)));
+      await settling.addInitScript(() => {
+        window.settleProbe = {starts: 0, ends: 0};
+        document.addEventListener('animationstart', event => {
+          if (event.animationName !== 'compact-settle') return;
+          settleProbe.starts++;
+          settleProbe.animation = event.target.getAnimations().find(animation => animation.animationName === event.animationName);
+          settleProbe.animation.pause();
+          settleProbe.animation.currentTime = 0;
+        });
+        document.addEventListener('animationend', event => { if (event.animationName === 'compact-settle') settleProbe.ends++; });
+      });
+      for (const [width, height, fontSize] of [[320, 220, 16], [390, 260, 24], [390, 280, 32]]) {
+        await settling.setViewportSize({width, height: 800}); await settling.goto(url); await settling.locator('.entry').waitFor();
+        await settling.evaluate(size => {
+          document.documentElement.style.fontSize = `${size}px`;
+          dispatchEvent(new Event('resize'));
+        }, fontSize);
+        await frames(settling);
+        const typing = settling.locator('#command');
+        await typing.fill('unfinished command');
+        await settling.setViewportSize({width, height});
+        await settling.waitForFunction(() => settleProbe.animation?.playState === 'paused');
+        await settling.evaluate(() => settleProbe.animation.ready.then(() => undefined));
+        let inputBounds;
+        for (const progress of [0, .5, 1]) {
+          const sample = await settling.evaluate(progress => {
+            const animation = settleProbe.animation, timing = animation.effect.getTiming();
+            animation.currentTime = timing.duration * progress;
+            const screen = document.querySelector('.screen'), style = getComputedStyle(screen), rect = screen.getBoundingClientRect();
+            const entry = document.querySelector('.entry').getBoundingClientRect(), field = document.querySelector('#command');
+            const line = parseFloat(getComputedStyle(screen.querySelector('.initial-document')).lineHeight);
+            const top = Math.max(rect.top + parseFloat(style.paddingTop), visualViewport?.offsetTop ?? 0);
+            const bottom = Math.min(rect.bottom - parseFloat(style.paddingBottom), (visualViewport?.offsetTop ?? 0) + (visualViewport?.height ?? innerHeight));
+            return {duration: timing.duration, iterations: timing.iterations, input: field.getBoundingClientRect().toJSON(), focused: document.activeElement === field, draft: field.value, lines: (bottom - top) / line, overlap: rect.bottom > entry.top};
+          }, progress);
+          assert.ok(sample.duration > 0 && sample.duration <= 250 && sample.iterations === 1, 'Typing transition is brief and finite');
+          inputBounds ??= sample.input;
+          assert.deepEqual(sample.input, inputBounds, 'The real input stays stationary throughout the output animation');
+          assert.equal(sample.focused, true); assert.equal(sample.draft, 'unfinished command');
+          assert.ok(sample.lines >= 3, `${engine} animated output retains three readable lines at ${fontSize}px`);
+          assert.equal(sample.overlap, false, 'Animated output stays above the controls');
+        }
+        await settling.evaluate(async () => { settleProbe.animation.finish(); await settleProbe.animation.finished; });
+        await frames(settling);
+        await settling.locator('#tools-toggle').tap(); await typing.press('x'); await frames(settling);
+        assert.equal(await typing.inputValue(), 'unfinished commandx');
+        assert.deepEqual(await settling.evaluate(() => [settleProbe.starts, settleProbe.ends]), [1, 1], 'Typing and Tools do not replay the completed transition');
+      }
+      await settling.setViewportSize({width: 390, height: 650}); await settling.goto(url); await settling.locator('.entry').waitFor();
+      const movingInput = settling.locator('#command');
+      const revealDuringMotion = async phase => {
+        // A tall result prevents the bottom scroll limit from hiding an offset error.
+        await movingInput.fill('x'.repeat(450)); await movingInput.press('Enter');
+        const result = await settling.locator('.block').last().evaluate(node => {
+          const screen = document.querySelector('.screen');
+          return {top: node.getBoundingClientRect().top - screen.getBoundingClientRect().top, scroll: screen.scrollTop};
+        });
+        assert.ok(result.scroll > 0, 'The reveal check exercises prior output and nonzero scrolling');
+        assert.ok(Math.abs(result.top - 12) < 1, `${engine} result aligns before/during/after motion (${phase}: ${result.top}px)`);
+      };
+      await movingInput.fill('help'); await movingInput.press('Enter');
+      await revealDuringMotion('before');
+      await settling.setViewportSize({width: 390, height: 260});
+      await settling.waitForFunction(() => settleProbe.animation?.playState === 'paused');
+      await settling.evaluate(async () => {
+        await settleProbe.animation.ready;
+        settleProbe.animation.currentTime = settleProbe.animation.effect.getTiming().duration / 2;
+      });
+      await revealDuringMotion('during');
+      const readerScroll = await settling.locator('.screen').evaluate(node => { node.scrollTop = 73; return node.scrollTop; });
+      assert.ok(readerScroll > 0);
+      await settling.evaluate(async () => { settleProbe.animation.finish(); await settleProbe.animation.finished; });
+      await frames(settling);
+      assert.equal(await settling.locator('.screen').evaluate(node => node.scrollTop), readerScroll, 'Finishing the transition does not overwrite a reader scroll');
+      await revealDuringMotion('after');
+      await settling.setViewportSize({width: 390, height: 650}); await frames(settling);
+      await settling.setViewportSize({width: 390, height: 260});
+      await settling.waitForFunction(() => settleProbe.starts === 2 && settleProbe.animation?.playState === 'paused');
+      await settling.evaluate(async () => {
+        await settleProbe.animation.ready;
+        settleProbe.animation.currentTime = settleProbe.animation.effect.getTiming().duration / 2;
+      });
+      await movingInput.fill('draft during motion');
+      await settling.emulateMedia({reducedMotion: 'reduce'}); await frames(settling);
+      assert.equal(await settling.locator('.screen').evaluate(node => node.getAnimations().length), 0, 'Enabling reduced motion cancels an active typing transition');
+      assert.equal(await settling.evaluate(() => settleProbe.animation.playState), 'idle');
+      assert.equal(await movingInput.inputValue(), 'draft during motion');
+      assert.equal(await movingInput.evaluate(node => document.activeElement === node), true);
+      await settling.setViewportSize({width: 390, height: 800}); await frames(settling);
+      await settling.emulateMedia({reducedMotion: 'reduce'});
+      await settling.setViewportSize({width: 390, height: 280}); await frames(settling);
+      assert.equal(await settling.locator('.screen').evaluate(node => node.getAnimations().length), 0, 'Reduced motion skips the typing transition');
+      await settling.setViewportSize({width: 1280, height: 900}); await frames(settling);
+      await settling.emulateMedia({reducedMotion: 'no-preference'}); await frames(settling);
+      assert.equal(await settling.locator('.screen').evaluate(node => node.getAnimations().length), 0, 'Desktop output has no typing animation');
+      assert.deepEqual(await settling.evaluate(() => [settleProbe.starts, settleProbe.ends]), [2, 1]);
+      await settling.close();
       await page.goto(url + '#/missing');
       await page.locator('.error').last().waitFor();
       assert.match(await page.locator('#output').textContent(), /not available/);

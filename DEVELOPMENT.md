@@ -128,6 +128,16 @@ disclosure and completion panel never cover one another. Output reserves at
 least three text lines with Tools closed, or one while the controls are open.
 The page can scroll if enlarged text makes the whole interface taller than the
 visible area. Desktop layout is unchanged.
+Entering compact mode gives the output a brief CSS-only settle. Viewport sizing
+and input placement remain immediate, and reduced motion disables the effect.
+The output owns result-scroll coordinates so submitting during the transition
+reveals the same position as submitting afterward. Viewport-height updates stop
+at the output container instead of restyling its entire transcript.
+Compact mode retains the frame's flex layout, avoiding an intrinsic-size scan of
+the transcript when the keyboard changes the available height.
+Listing and history columns align their text baselines, including larger touch
+buttons and wrapped filenames. On narrow screens the help column follows text
+size, with a width cap that leaves room for descriptions.
 The compact-height threshold grows with the root text size, so larger text does
 not fall back to a cramped full layout just above the normal breakpoint. Opening
 help or browsing a document preserves an unfinished command. Closing an already

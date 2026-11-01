@@ -78,6 +78,9 @@ button:focus-visible,a:focus-visible,input:focus-visible,.screen:focus-visible {
 }
 
 .screen {
+  /* Viewport sizing belongs to the frame and controls, not the transcript. */
+  --viewport-height: initial;
+  position: relative;
   flex: 1;
   min-height: 0;
   overflow-y: auto;
@@ -151,7 +154,7 @@ button:focus-visible,a:focus-visible,input:focus-visible,.screen:focus-visible {
   display: grid;
   grid-template-columns: minmax(100px,150px) 1fr;
   gap: 16px;
-  align-items: start;
+  align-items: baseline;
 }
 
 .listing-row button {
@@ -323,6 +326,7 @@ form:focus-within {
 
 .history-list li {
   display: flex;
+  align-items: baseline;
   gap: 16px;
 }
 
@@ -422,7 +426,7 @@ form:focus-within {
     gap: 10px;
   }
   .help-list {
-    grid-template-columns: 80px 1fr;
+    grid-template-columns: min(11ch, 45%) minmax(0, 1fr);
     gap: 6px 10px;
   }
   .run {
@@ -563,14 +567,10 @@ body.compact-terminal {
   --tools-height: max(44px, 1.225rem);
   align-self: start;
   height: calc(var(--viewport-height, 100dvh) - var(--page-inset-top) - var(--page-inset-bottom));
-  display: grid;
-  grid-template-rows: minmax(calc(5.1rem + 16px), 1fr) auto;
   /* Output padding (16), form padding/borders (8), entry (17), frame (2). */
   min-height: calc(5.1rem + var(--compact-input-height) + 43px);
 }
 .terminal.compact.tools-open {
-  /* Temporarily share reading space with one row of full-size controls. */
-  grid-template-rows: minmax(calc(1.7rem + 16px), 1fr) auto;
   /* Keep these properties local: inherited variables would restyle the transcript. */
   min-height: max(calc(5.1rem + var(--compact-input-height) + 43px),
     calc(1.7rem + var(--compact-input-height) + var(--tools-height) + 47px));
@@ -579,8 +579,29 @@ body.compact-terminal {
   display: none;
 }
 .terminal.compact .screen {
+  min-height: calc(5.1rem + 16px);
   padding-block: 8px;
   overscroll-behavior: auto;
+}
+.terminal.compact.tools-open .screen {
+  /* Temporarily share reading space with one row of full-size controls. */
+  min-height: calc(1.7rem + 16px);
+}
+/* Soften the layout handoff without moving the input or delaying viewport sizing. */
+@media(prefers-reduced-motion:no-preference) {
+  .terminal.compact .screen {
+    animation: compact-settle 160ms ease-out;
+  }
+  @keyframes compact-settle {
+    from {
+      opacity: .92;
+      transform: translateY(-4px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
 }
 .terminal.compact .entry {
   display: flex;

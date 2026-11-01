@@ -354,12 +354,12 @@ test('200 commands retain 40 blocks, add no listeners, and reveal each result im
   const initialListeners = app.metrics.listeners;
   for (let index = 0; index < 200; index++) {
     app.submit('ls /');
-    const expectedTop = Math.max(0, app.output.lastElementChild._offsetTop - app.screen._offsetTop - 12);
+    const expectedTop = Math.max(0, app.output.lastElementChild._offsetTop - 12);
     assert.equal(app.screen.scrollTop, expectedTop);
   }
   assert.equal(app.output.children.length, 40);
   assert.equal(app.metrics.listeners, initialListeners);
-  assert.equal(app.metrics.geometryReads, 400);
+  assert.equal(app.metrics.geometryReads, 200);
   assert.equal(app.metrics.scrollWrites, 200);
   const position = app.screen.scrollTop;
   app.flushFrame();
@@ -403,7 +403,7 @@ test('a command after clear reveals its own result immediately without deferred 
   app.submit('clear');
   app.submit('pwd');
   assert.equal(app.output.children.length, 1);
-  const expectedTop = Math.max(0, app.output.lastElementChild._offsetTop - app.screen._offsetTop - 12);
+  const expectedTop = Math.max(0, app.output.lastElementChild._offsetTop - 12);
   assert.equal(app.screen.scrollTop, expectedTop);
   const writes = app.metrics.scrollWrites;
   app.flushFrame();
@@ -442,7 +442,7 @@ test('viewport size passes to CSS for safe-area sizing; missing visualViewport i
   assert.equal(fallback.terminal.style.getPropertyValue('--viewport-height'), '');
   fallback.submit('pwd');
   fallback.flushFrame();
-  assert.equal(fallback.metrics.geometryReads, 2);
+  assert.equal(fallback.metrics.geometryReads, 1);
   fallback.resize(390, 250);
   fallback.flushFrame();
   assert.equal(fallback.terminal.style.getPropertyValue('--viewport-height'), '250px');
