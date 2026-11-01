@@ -85,6 +85,11 @@ export async function createApp({root = new URL('../../', import.meta.url), widt
     set textContent(value) { this.replaceChildren(); this._text = String(value); }
     set innerHTML(_) { throw new Error('Unsafe HTML assignment: use textContent/DOM nodes.'); }
     get offsetTop() { metrics.geometryReads++; return this._offsetTop; }
+    getBoundingClientRect() {
+      metrics.geometryReads++;
+      // Explicit input geometry for viewport logic tests, not a layout model.
+      return {bottom: this._bottom ?? globals.innerHeight - 25 - (window.scrollY || 0)};
+    }
     get scrollTop() { return this._scrollTop; }
     set scrollTop(value) { metrics.scrollWrites++; this._scrollTop = value; }
     append(...nodes) {

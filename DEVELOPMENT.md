@@ -120,7 +120,20 @@ JavaScript override. Browsers that resize only the visual viewport retain the
 measured-height fallback. This is progressive enhancement, not a guarantee of
 support in any particular iPhone browser. WebKit can report keyboard geometry
 before or after its native animation; desktop emulation cannot verify that timing.
-No guessed keyboard duration, focus-based height prediction, or polling is added.
+On mobile focus, the fallback keeps the input's layout position fixed while the
+browser pans it into view. Frame height and top inset change together, so an early
+height report cannot move the browser's focus target a second time. The header
+can still fold immediately. One 350ms safety timeout checks the input once after
+layout; if native panning did not reveal it, measured-height sizing
+resumes. The timeout bounds a missing-pan fallback, not a keyboard animation.
+A partial pan that already reveals the input needs no correction. Later viewport
+changes release the anchor if they reduce the available height, would cover the
+input, or change the layout.
+Done releases the height and inset overrides on blur; stale closing events cannot
+reapply them before the next focus. Programmatic mobile focus permits native
+reveal, and an already focused field is never focused again. No keyboard-height
+prediction, continuous animation, or polling is used. Actual iPhone verification
+is still required: desktop engines cannot reproduce the native keyboard's timing.
 Mobile sizing accounts for safe areas and the visual viewport, preserves layout
 during pinch zoom, and coalesces viewport resize and pan events into one animation
 frame. CSS
@@ -148,7 +161,10 @@ visible area. Fine-pointer desktop layout is unchanged. The output reserves a
 scrollbar gutter where classic scrollbars need space, avoiding text reflow when
 output begins or stops overflowing.
 When the keyboard pans the visual viewport, the frame follows its vertical offset
-with a normal-flow margin. It never follows document scrolling, so oversized
+with a normal-flow margin. The opening handoff preserves the frame's layout
+bottom, including when the keyboard covers only the bottom padding. Mobile scroll
+anchoring is disabled where supported so it cannot add another adjustment.
+The frame never follows document scrolling, so oversized
 layouts remain scrollable. The offset is bounded by the difference between layout
 and visual viewport heights and clears as the full height returns. The transcript
 has no transform or independent animation. The output owns result-scroll

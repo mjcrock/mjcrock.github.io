@@ -36,7 +36,9 @@ function element(tag, text, className) {
 }
 
 const displayPath = () => session.cwd === '/' ? '~' : '~' + session.cwd;
-const focusInput = () => input.focus({preventScroll: true});
+const focusInput = () => {
+  if (document.activeElement !== input) input.focus({preventScroll: !terminal.classList.contains('mobile')});
+};
 const announce = message => { announcement.textContent = message; };
 const modified = event => event.isComposing || event.ctrlKey || event.metaKey || event.altKey || event.shiftKey;
 const updatePrompt = () => { prompt.textContent = `guest:${displayPath()} $`; };
@@ -436,14 +438,29 @@ window.addEventListener('hashchange', () => navigate());
 {
   const viewport = window.visualViewport;
   const touch = window.matchMedia?.('(pointer:coarse)');
+  const reducedMotion = window.matchMedia?.('(prefers-reduced-motion:reduce)');
   let pending = false;
+  let opening = 0, anchor = null, dismissed = false;
+  const stopOpening = () => { window.clearTimeout(opening); opening = 0; anchor = null; };
   const applyViewport = () => {
     pending = false;
     // Pinch zoom shrinks the visual viewport too. Preserve the layout so
     // magnification never masquerades as a keyboard opening or loses text.
     if (viewport?.scale && viewport.scale !== 1) return;
-    const availableHeight = viewport?.height ?? innerHeight;
+    const reportedHeight = viewport?.height ?? innerHeight;
     const mobile = innerWidth <= 600 || Boolean(touch?.matches);
+    const availableHeight = dismissed ? innerHeight : reportedHeight;
+    const top = mobile && !dismissed
+      ? Math.max(0, Math.min(viewport?.offsetTop ?? 0, innerHeight - availableHeight)) : 0;
+    if (anchor) {
+      // Keep the native focus target stationary while the browser pans it.
+      // Releasing only because the height arrived first creates a second move.
+      // After the bounded handoff, fall back if native panning did not reveal
+      // the input (also covers later keyboard-size changes without polling).
+      if (!mobile || innerWidth !== anchor.width || innerHeight !== anchor.height ||
+          (window.scrollY || 0) !== anchor.scroll || reducedMotion?.matches ||
+          (anchor.bottom !== undefined && (reportedHeight < anchor.visibleHeight - 1 || reportedHeight + top < anchor.bottom - 1))) stopOpening();
+    }
     const fontSize = mobile ? parseFloat(getComputedStyle(document.documentElement).fontSize) : 16;
     const compact = mobile && availableHeight <= Math.max(440, 20 * fontSize);
     if (compact && !terminal.classList.contains('compact') && toolbar.contains(document.activeElement)) {
@@ -460,24 +477,50 @@ window.addEventListener('hashchange', () => navigate());
     // Let native viewport sizing drive the keyboard movement where supported.
     // Only compensate when the visual viewport differs from the layout viewport
     // (allowing one pixel of rounding), or when the API is unavailable.
-    const height = mobile && (!viewport || Math.abs(availableHeight - innerHeight) > 1)
-      ? `${availableHeight}px` : '';
+    const frameHeight = anchor ? anchor.height - top : availableHeight;
+    const height = mobile && (!viewport || Math.abs(frameHeight - innerHeight) > 1)
+      ? `${frameHeight}px` : '';
     if (terminal.style.getPropertyValue('--viewport-height') !== height) {
       if (height) terminal.style.setProperty('--viewport-height', height);
       else terminal.style.removeProperty('--viewport-height');
     }
     // A phone keyboard can pan the visual viewport without scrolling the page.
     // Follow that pan in normal flow, but never follow the reader's page scroll.
-    const top = mobile
-      ? Math.max(0, Math.min(viewport?.offsetTop ?? 0, innerHeight - availableHeight)) : 0;
     const margin = top ? `${top}px` : '';
     if (terminal.style.marginTop !== margin) terminal.style.marginTop = margin;
+    if (anchor && !opening && anchor.bottom === undefined) {
+      // Measure once, after this frame's geometry and minimum sizes apply.
+      anchor.bottom = input.getBoundingClientRect().bottom;
+      anchor.visibleHeight = reportedHeight;
+      if (reportedHeight + top < anchor.bottom - 1) { stopOpening(); fit(); }
+    }
   };
   const fit = () => {
     if (pending) return;
     pending = true;
     requestAnimationFrame(applyViewport);
   };
+  input.addEventListener('focus', () => {
+    stopOpening();
+    const reopening = dismissed;
+    dismissed = false;
+    if (terminal.classList.contains('mobile') && viewport?.scale === 1 &&
+        (reopening || viewport.height >= innerHeight - 1) && !reducedMotion?.matches) {
+      anchor = {width: innerWidth, height: innerHeight, scroll: window.scrollY || 0};
+      // Safety deadline for missing/partial native pan, not an animation curve.
+      opening = window.setTimeout(() => { opening = 0; fit(); }, 350);
+    }
+    fit();
+  });
+  input.addEventListener('blur', () => {
+    stopOpening();
+    // Done can precede the final viewport event. Return layout ownership now,
+    // letting the native pan unwind instead of canceling it with stale offsets.
+    dismissed = terminal.classList.contains('mobile');
+    fit();
+  });
+  reducedMotion?.addEventListener?.('change', () => { stopOpening(); fit(); });
+  document.addEventListener('visibilitychange', () => { if (document.hidden) stopOpening(); else fit(); });
   viewport?.addEventListener('resize', fit);
   viewport?.addEventListener('scroll', fit);
   touch?.addEventListener?.('change', fit);

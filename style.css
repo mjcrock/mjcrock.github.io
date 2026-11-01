@@ -579,6 +579,8 @@ body.mobile-terminal {
   min-height: 100dvh;
 }
 .terminal.mobile {
+  /* The app owns transcript reveal and viewport compensation. */
+  overflow-anchor: none;
   --entry-inset: 8px;
   --compact-input-height: max(44px, 1.5rem);
   --tools-height: max(44px, 1.225rem);
@@ -677,8 +679,8 @@ body.mobile-terminal {
   grid-template-rows: 1fr;
   visibility: visible;
 }
-/* Fold only the small chrome regions. The viewport and caret never lag behind
-   the keyboard, and native CSS reversal handles an interrupted transition. */
+/* Fold only the small chrome regions, without animating the viewport or caret.
+   Native CSS reversal handles an interrupted transition. */
 @media(prefers-reduced-motion:no-preference) {
   .terminal.mobile .bar,.terminal.mobile .tools-shell {
     transition: grid-template-rows 180ms ease-out, opacity 120ms ease-out;
