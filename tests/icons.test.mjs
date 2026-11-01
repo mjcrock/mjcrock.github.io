@@ -7,8 +7,8 @@ const svg = readFileSync(new URL('../favicon.svg', import.meta.url));
 const signature = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
 
 test('one SVG deterministically produces valid PNG headers at both icon sizes', () => {
-  assert.deepEqual(iconSizes, {'favicon.png': 64, 'apple-touch-icon.png': 180});
-  for (const size of [64, 180]) {
+  assert.deepEqual(iconSizes, {'favicon.png': 192, 'apple-touch-icon.png': 180});
+  for (const size of [192, 180]) {
     const png = renderIcon(svg, size);
     assert.deepEqual(png.subarray(0, 8), signature);
     assert.equal(png.toString('ascii', 12, 16), 'IHDR');

@@ -36,7 +36,7 @@ try {
         }
         return sizes;
       });
-      assert.deepEqual(icons, [[64, 64], [180, 180]], 'Generated icons decode under the site CSP');
+      assert.deepEqual(icons, [[192, 192], [180, 180]], 'Generated icons decode under the site CSP');
       const frame = await page.locator('.terminal').boundingBox();
       assert.deepEqual([frame.width, frame.height], [960, 560], 'Fine-pointer desktop frame stays unchanged');
       const input = page.locator('#command');
@@ -146,6 +146,40 @@ try {
         assert.ok(rows.at(-1).description.lines > 1, 'The history fixture exercises a wrapped command');
       }
       await listing.close();
+
+      // A native layout resize must move the frame before the next JS callback.
+      // This checks CSS ownership, not an emulation of iOS keyboard animation.
+      const nativeResize = await browser.newPage({viewport: {width: 390, height: 900}, hasTouch: true, reducedMotion: 'reduce'});
+      nativeResize.on('pageerror', error => errors.push(String(error)));
+      await nativeResize.goto(url); await nativeResize.locator('.entry').waitFor();
+      await nativeResize.evaluate(() => {
+        document.documentElement.style.fontSize = '24px';
+        dispatchEvent(new Event('resize'));
+      });
+      await nativeResize.locator('#command').fill('preserved native draft'); await frames(nativeResize);
+      for (const height of [300, 900]) {
+        await nativeResize.evaluate(() => {
+          window.nativeFrame = requestAnimationFrame;
+          window.pendingViewportFrames = [];
+          window.requestAnimationFrame = callback => pendingViewportFrames.push(callback);
+        });
+        await nativeResize.setViewportSize({width: 390, height});
+        const nativeGeometry = await nativeResize.evaluate(() => {
+          const terminal = document.querySelector('.terminal'), field = document.querySelector('#command');
+          return {height: terminal.getBoundingClientRect().height, override: terminal.style.getPropertyValue('--viewport-height'),
+            inputBottom: field.getBoundingClientRect().bottom, draft: field.value};
+        });
+        assert.equal(nativeGeometry.override, '', 'Matching native viewports use CSS height without a JS override');
+        assert.equal(nativeGeometry.height, height - 16, 'Native frame size updates without waiting for JS');
+        assert.ok(nativeGeometry.inputBottom <= height, 'The input remains inside the resized native viewport');
+        assert.equal(nativeGeometry.draft, 'preserved native draft');
+        await nativeResize.evaluate(() => {
+          window.requestAnimationFrame = nativeFrame;
+          for (const callback of pendingViewportFrames) callback(performance.now());
+        });
+        await frames(nativeResize);
+      }
+      await nativeResize.close();
 
       const compact = await browser.newPage({reducedMotion: 'reduce', hasTouch: true});
       const field = compact.locator('#command');

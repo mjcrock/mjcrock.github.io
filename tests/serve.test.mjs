@@ -30,7 +30,7 @@ test('preview serves only public files on loopback and rejects private or encode
     assert.equal(head.status, 200);
     assert.equal(head.body.length, 0);
     const svg = await readFile(svgSource);
-    for (const [name, size] of [['favicon.png', 64], ['apple-touch-icon.png', 180]]) {
+    for (const [name, size] of [['favicon.png', 192], ['apple-touch-icon.png', 180]]) {
       const image = await get(`/${name}?v=1`);
       assert.equal(image.status, 200);
       assert.equal(image.headers['content-type'], 'image/png');
