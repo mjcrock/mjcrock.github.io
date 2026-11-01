@@ -5,3 +5,6 @@ __MACOSX/
 
 # Generated deployment staging
 _site/
+
+# Local build dependencies
+node_modules/

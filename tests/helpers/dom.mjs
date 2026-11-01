@@ -246,12 +246,15 @@ export async function createApp({root = new URL('../../', import.meta.url), widt
     button.dataset.command = command;
     return button;
   });
-  const helpMarkup = markup.match(/<button([^>]*class="show-commands"[^>]*)>([^<]*)<\/button>/u);
+  const helpMarkup = markup.match(/<button([^>]*class="show-commands"[^>]*)>([\s\S]*?)<\/button>/u);
   if (helpMarkup) {
     const [, attributes, label] = helpMarkup;
     const help = make('button', '', toolbar, 'show-commands');
     help.dataset.command = attributes.match(/data-command="([^"]+)"/u)?.[1];
-    help.textContent = label;
+    // This DOM model has no CSS layout; retain the default visible label.
+    help.textContent = label.match(/<span class="wide-label">([^<]*)<\/span>/u)?.[1] ?? label;
+    const accessibleLabel = attributes.match(/aria-label="([^"]+)"/u)?.[1];
+    if (accessibleLabel) help.setAttribute('aria-label', accessibleLabel);
   }
   for (const id of ['complete', 'previous', 'next']) make('button', id, toolbar);
   make('button', 'read-output', entry);

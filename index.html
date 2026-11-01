@@ -8,7 +8,8 @@
   <meta name="robots" content="noindex,nofollow">
   <meta name="description" content="Michael J. Crockett's personal website.">
   <title>Michael J. Crockett</title>
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%232c2533'/%3E%3Cpath d='m17 20 12 12-12 12m18 0h13' fill='none' stroke='%239dc9e8' stroke-width='5'/%3E%3C/svg%3E">
+  <link rel="icon" type="image/png" sizes="64x64" href="favicon.png">
+  <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png">
   <link rel="stylesheet" href="style.css">
   <link rel="modulepreload" href="engine.js">
   <link rel="modulepreload" href="routing.js">
@@ -38,7 +39,7 @@
         <div id="completions" class="completions" role="listbox" hidden aria-label="Completion choices"></div>
       </div>
       <div class="toolbar" id="command-tools">
-        <button type="button" data-command="help" class="show-commands">Show commands</button>
+        <button type="button" data-command="help" class="show-commands" aria-label="Show commands"><span class="wide-label">Show commands</span><span class="compact-label" aria-hidden="true">Commands</span></button>
         <div class="keys">
           <button type="button" id="complete" aria-label="Complete command or path" title="Complete command or path">⇥<span> complete</span></button>
           <button type="button" id="previous" aria-label="Previous command" title="Previous command">↑</button>
