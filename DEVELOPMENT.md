@@ -127,8 +127,10 @@ can still fold immediately. One 350ms safety timeout checks the input once after
 layout; if native panning did not reveal it, measured-height sizing
 resumes. The timeout bounds a missing-pan fallback, not a keyboard animation.
 A partial pan that already reveals the input needs no correction. Later viewport
-changes release the anchor if they reduce the available height, would cover the
-input, or change the layout.
+changes release the anchor only if they would cover the input or change the layout.
+Small visual-height fluctuations and fractional page scrolling do not switch
+positioning rules. The visibility check uses document coordinates so native page
+scrolling does not become another layout adjustment.
 Done releases the height and inset overrides on blur; stale closing events cannot
 reapply them before the next focus. Programmatic mobile focus permits native
 reveal, and an already focused field is never focused again. No keyboard-height
@@ -154,10 +156,12 @@ horizontally instead of wrapping. Tapping these controls while
 typing preserves input focus until an action intentionally changes it. Run,
 completion choices, and recalled commands also preserve focus between pointer
 down and click, avoiding a keyboard dismissal followed by immediate reopening. The
-disclosure and completion panel never cover one another. Output reserves at
-least three text lines with Tools closed, or one while the controls are open.
-The page can scroll if enlarged text makes the whole interface taller than the
-visible area. Fine-pointer desktop layout is unchanged. The output reserves a
+disclosure and completion panel never cover one another. Output prioritizes three
+text lines with Tools closed, or one while the controls are open, bounded by the
+space left above the full-size controls. It yields space on unusually short
+viewports instead of pushing the input down to enforce three lines. The minimum
+frame holds one readable line and the full-size controls; below that minimum the
+page can scroll to keep both reachable. Fine-pointer desktop layout is unchanged. The output reserves a
 scrollbar gutter where classic scrollbars need space, avoiding text reflow when
 output begins or stops overflowing.
 When the keyboard pans the visual viewport, the frame follows its vertical offset

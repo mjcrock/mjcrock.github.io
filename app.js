@@ -458,8 +458,8 @@ window.addEventListener('hashchange', () => navigate());
       // After the bounded handoff, fall back if native panning did not reveal
       // the input (also covers later keyboard-size changes without polling).
       if (!mobile || innerWidth !== anchor.width || innerHeight !== anchor.height ||
-          (window.scrollY || 0) !== anchor.scroll || reducedMotion?.matches ||
-          (anchor.bottom !== undefined && (reportedHeight < anchor.visibleHeight - 1 || reportedHeight + top < anchor.bottom - 1))) stopOpening();
+          reducedMotion?.matches ||
+          (anchor.bottom !== undefined && reportedHeight + top + (window.scrollY || 0) < anchor.bottom - 1)) stopOpening();
     }
     const fontSize = mobile ? parseFloat(getComputedStyle(document.documentElement).fontSize) : 16;
     const compact = mobile && availableHeight <= Math.max(440, 20 * fontSize);
@@ -490,9 +490,9 @@ window.addEventListener('hashchange', () => navigate());
     if (terminal.style.marginTop !== margin) terminal.style.marginTop = margin;
     if (anchor && !opening && anchor.bottom === undefined) {
       // Measure once, after this frame's geometry and minimum sizes apply.
-      anchor.bottom = input.getBoundingClientRect().bottom;
-      anchor.visibleHeight = reportedHeight;
-      if (reportedHeight + top < anchor.bottom - 1) { stopOpening(); fit(); }
+      // Document coordinates keep native page scrolling out of layout sizing.
+      anchor.bottom = input.getBoundingClientRect().bottom + (window.scrollY || 0);
+      if (reportedHeight + top + (window.scrollY || 0) < anchor.bottom - 1) { stopOpening(); fit(); }
     }
   };
   const fit = () => {
@@ -506,7 +506,7 @@ window.addEventListener('hashchange', () => navigate());
     dismissed = false;
     if (terminal.classList.contains('mobile') && viewport?.scale === 1 &&
         (reopening || viewport.height >= innerHeight - 1) && !reducedMotion?.matches) {
-      anchor = {width: innerWidth, height: innerHeight, scroll: window.scrollY || 0};
+      anchor = {width: innerWidth, height: innerHeight};
       // Safety deadline for missing/partial native pan, not an animation curve.
       opening = window.setTimeout(() => { opening = 0; fit(); }, 350);
     }
