@@ -15,9 +15,11 @@ const css = read('style.css');
 test('all runtime resources are local and exist; legacy stylesheet is removed', () => {
   const resources = [...html.matchAll(/<(?:link|script)\b[^>]*>/g)].map(match => match[0]);
   for (const [, path] of resources.join('\n').matchAll(/(?:src|href)="([^"]+)"/g)) {
-    if (path.startsWith('data:image/svg+xml,')) continue;
     assert.match(path, /^[A-Za-z][A-Za-z.-]+$/);
-    assert.ok(existsSync(new URL(path, root)), path);
+    if (['favicon.png', 'apple-touch-icon.png'].includes(path)) {
+      assert.ok(existsSync(new URL('favicon.svg', root)), 'Generated icons have an authored SVG source');
+      assert.equal(existsSync(new URL(path, root)), false, 'Generated PNGs are not stored beside source');
+    } else assert.ok(existsSync(new URL(path, root)), path);
   }
   assert.ok(!existsSync(new URL('assets/styles.css', root)));
   assert.ok(!/assets\/styles\.css/.test(html));
@@ -29,6 +31,12 @@ test('all runtime resources are local and exist; legacy stylesheet is removed', 
   }
   assert.doesNotMatch(app + engine + routing, /from ['"]\.\/markdown\.js['"]/);
   assert.doesNotMatch(resources.join('\n'), /markdown\.js/);
+});
+
+test('tab and Apple icons use explicit local PNG links with the intended sizes', () => {
+  assert.match(html, /<link rel="icon" type="image\/png" sizes="64x64" href="favicon\.png">/);
+  assert.match(html, /<link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon\.png">/);
+  assert.doesNotMatch(html, /data:image\/svg\+xml/);
 });
 
 test('CSP allows only same-origin loading and no inline/eval execution', () => {
@@ -124,7 +132,8 @@ test('runtime module imports resolve to local files, including the bounded route
 test('approved identity, direct help control, and real canonical README replace placeholders', () => {
   assert.match(html, /<h1 class="site-name">Michael J\. Crockett<\/h1>/);
   assert.match(html, /<p class="site-status">Site in progress<\/p>/);
-  assert.match(html, /<button type="button" data-command="help" class="show-commands">Show commands<\/button>/);
+  assert.match(html, /<button type="button" data-command="help" class="show-commands" aria-label="Show commands">/);
+  assert.match(html, /<span class="wide-label">Show commands<\/span><span class="compact-label" aria-hidden="true">Commands<\/span>/);
   assert.doesNotMatch(html, /<footer|class="mode"|data-command="ls \/"|data-command="open \/writing\/sample"/);
   assert.doesNotMatch(app + html, /Interactive study|Interactive terminal|Generic placeholders|content placeholders/);
   assert.ok(existsSync(new URL('README.md', root)));

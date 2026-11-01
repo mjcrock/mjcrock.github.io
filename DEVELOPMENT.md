@@ -1,7 +1,7 @@
 # Development
 
-The site is a dependency-free static terminal interface. The repository-root
-`README.md` is the **single authored public Markdown document**, not this guide.
+The site is a static terminal interface with no browser runtime dependencies.
+The repository-root `README.md` is the **single authored public Markdown document**, not this guide.
 The virtual root lists only that real file; no empty categories are invented.
 
 ## Editing public content
@@ -30,14 +30,18 @@ U+FFFD. The original source used by `cat` remains exact.
 
 ## Preview and checks
 
+Use Node.js 24 or a newer supported version. After cloning, install the locked
+build dependencies once. The SVG renderer is used only by deployment and local
+preview; it is never loaded by visitors:
+
 ```sh
+npm ci --include=dev --ignore-scripts --no-audit --no-fund
 node scripts/serve.mjs
 ```
 
-Open `http://localhost:8000`. Reload after README edits. The preview renders the
-page in memory on each request and creates no build files. HTTP is required for
-JavaScript modules. Use Node.js 24 or another recent version supporting
-ES-module syntax detection for checks:
+Open `http://localhost:8000`. Reload after README or SVG edits. The preview renders
+the page and requested icons in memory and creates no build files. HTTP is
+required for JavaScript modules. Run the checks with:
 
 ```sh
 node scripts/update-readme.mjs --check
@@ -79,8 +83,12 @@ screen-reader or phone verification.
 - `scripts/update-readme.mjs`: build-only HTML renderer and source validation.
 - `scripts/build.mjs`: deployment staging with content-versioned asset URLs.
 - `scripts/serve.mjs`: local preview server shared by the browser checks.
+- `favicon.svg`: the single authored icon, with an opaque plum background.
+- `scripts/icons.mjs`: build/preview renderer for the 64px favicon and 180px Apple icon.
+- `package.json` and `package-lock.json`: pinned build tooling, never deployed.
 
-The browser loads six runtime assets: HTML, CSS and four JavaScript modules.
+The page renders from six runtime assets: HTML, CSS and four JavaScript modules.
+The browser can also request the generated PNG icons for tabs or saved pages.
 It does not request README.md to render content. The CSP disallows connections,
 inline scripts, objects, frames, workers, bases and form actions. Module preloads
 let browsers discover the imported modules alongside the entry script.
@@ -111,12 +119,15 @@ sizes the output in proportion to text size, with window dimensions as the
 fallback when the visual viewport API is unavailable. Large default
 fonts, short landscape layouts, coarse pointers, and forced colors are supported.
 On narrow or touch-first screens with little available height, the header and full prompt give
-way to output and a single command row. Tools reveals help, completion, and
-history without permanently reserving another row. Tapping these controls while
+way to output and a single command row. Tools reveals a shallow row of commands,
+completion, and history above the input. It reserves its own space so output
+scrolls entirely above the controls. At extreme text sizes the toolbar can scroll
+horizontally instead of wrapping. Tapping these controls while
 typing preserves input focus until an action intentionally changes it. The
 disclosure and completion panel never cover one another. Output reserves at
-least three text lines, and the page can scroll if enlarged text makes the
-whole interface taller than the visible area. Desktop layout is unchanged.
+least three text lines with Tools closed, or one while the controls are open.
+The page can scroll if enlarged text makes the whole interface taller than the
+visible area. Desktop layout is unchanged.
 The compact-height threshold grows with the root text size, so larger text does
 not fall back to a cramped full layout just above the normal breakpoint. Opening
 help or browsing a document preserves an unfinished command. Closing an already
@@ -144,6 +155,16 @@ hidden pages, and changes to reduced-motion preferences. No continuous animation
 loop, image assets, JSON fetch, or extra runtime package is needed. Output and
 history use the existing limits.
 
+## Icons
+
+Edit `favicon.svg` to change the icon. Deployment generates `favicon.png` and
+`apple-touch-icon.png` from that source with the locked `@resvg/resvg-js` renderer.
+Both PNGs are part of the staged site and share its content-versioned URLs.
+Do not create or commit PNG copies in the source folder. Local preview uses the
+same renderer and reflects SVG edits on the next icon request. Ordinary PNG links
+support browser interfaces that cannot use an SVG or data-URL favicon; a saved
+browser icon may still need to refresh after deployment.
+
 ## Content direction
 
 Keep `README.md` as the introduction, identity links, and selected work. Add real
@@ -167,18 +188,21 @@ needs to be added.
 
 Only pushes to `main` or manual runs on `main` deploy. The workflow uses pinned
 official actions, Node 24, read-only source access in the build, and Pages/OIDC
-permissions only in the deployment job. It publishes exactly seven public files
+permissions only in the deployment job. Before validation it runs
+`npm ci --include=dev --ignore-scripts --no-audit --no-fund` to install the locked
+build tooling without lifecycle scripts. It publishes exactly nine public files
 plus `.nojekyll`, not tests, scripts, this guide, hidden files, or the whole repo.
 For a future custom domain, configure it in Pages settings separately; this
 workflow targets the existing GitHub-provided domain.
 
 The workflow runs `node scripts/build.mjs` to create a new `_site/` directory.
-It renders `index.html`, copies `README.md`, and adds `.nojekyll`. CSS and all
-four JavaScript modules get a shared content-hash query string in the generated
-HTML and module imports, including nested imports. Changing any runtime asset
-produces fresh URLs, avoiding reuse of cached code or styles when the updated
-page loads. Filenames stay stable so older cached HTML can still resolve its
-asset URLs after later deployments. This adds no browser code or requests.
+It renders `index.html`, copies `README.md`, generates both PNG icons, and adds
+`.nojekyll`. CSS, all four JavaScript modules, and the generated PNGs get a shared
+content-hash query string in the generated HTML and module imports, including
+nested imports. Changing any runtime asset
+or the icon artwork produces fresh URLs, avoiding reuse of cached code, styles,
+or icons when the updated page loads. Filenames stay stable so older cached HTML can still resolve its
+asset URLs after later deployments. Versioning adds no browser code.
 An already-open page still needs a reload, and Pages may cache the HTML itself.
 
 The asset version is computed during the build, never stored in source. The

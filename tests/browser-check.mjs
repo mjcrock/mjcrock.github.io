@@ -24,6 +24,17 @@ try {
       await page.goto(url);
       await page.locator('.initial-document').waitFor();
       await page.locator('.entry').waitFor();
+      const icons = await page.evaluate(async () => {
+        const sizes = [];
+        for (const rel of ['icon', 'apple-touch-icon']) {
+          const image = new Image();
+          image.src = document.querySelector(`link[rel="${rel}"]`).href;
+          await image.decode();
+          sizes.push([image.naturalWidth, image.naturalHeight]);
+        }
+        return sizes;
+      });
+      assert.deepEqual(icons, [[64, 64], [180, 180]], 'Generated icons decode under the site CSP');
       const input = page.locator('#command');
       const run = async value => { await input.fill(value); await input.press('Enter'); };
       const openTools = async () => {
@@ -137,7 +148,7 @@ try {
         assert.equal(await tools.getAttribute('aria-expanded'), 'true');
         assert.equal(await field.evaluate(node => document.activeElement === node), true, 'Tapping Tools preserves typing focus');
         assert.equal(await field.inputValue(), 'unfinished command');
-        assert.deepEqual(await field.boundingBox(), before, 'Tools overlays output without moving the input');
+        assert.deepEqual(await field.boundingBox(), before, 'The shallow Tools row keeps the input stationary');
         await field.press('Escape');
         assert.equal(await toolbar.isHidden(), true);
         assert.equal(await field.evaluate(node => document.activeElement === node), true);
@@ -181,6 +192,60 @@ try {
       await compact.locator('#previous').focus();
       await compact.locator('#previous').press('Escape');
       assert.equal(await tools.evaluate(node => document.activeElement === node), true, 'Keyboard dismissal returns focus to the disclosure');
+
+      // The expanded controls must leave a separate, scrollable reading area.
+      for (const [width, height, fontSize] of [[320, 200, 16], [320, 250, 24], [320, 280, 32], [390, 260, 32]]) {
+        await compact.setViewportSize({width, height});
+        await compact.goto(url); await compact.locator('.entry').waitFor();
+        await compact.evaluate(size => {
+          document.documentElement.style.fontSize = `${size}px`;
+          window.dispatchEvent(new Event('resize'));
+        }, fontSize);
+        await field.fill('help'); await field.press('Enter');
+        await field.fill('unfinished command'); await field.focus(); await frames(compact);
+        const before = await field.boundingBox();
+        await tools.tap(); await frames(compact);
+        assert.equal(await tools.getAttribute('aria-expanded'), 'true');
+        assert.equal(await field.evaluate(node => document.activeElement === node), true);
+        assert.equal(await field.inputValue(), 'unfinished command');
+        assert.deepEqual(await field.boundingBox(), before, 'Opening Tools preserves the typing position');
+        assert.equal(await toolbar.locator('.wide-label').isHidden(), true);
+        assert.equal(await toolbar.locator('.compact-label').innerText(), 'Commands');
+        const geometry = await toolbar.evaluate(node => {
+          const bar = node.getBoundingClientRect();
+          const screen = document.querySelector('.screen').getBoundingClientRect();
+          const form = document.querySelector('form').getBoundingClientRect();
+          const controls = [...node.querySelectorAll('button')].map(button => {
+            const rect = button.getBoundingClientRect();
+            return {top: rect.top, bottom: rect.bottom, width: rect.width, height: rect.height};
+          });
+          return {height: bar.height, top: bar.top, bottom: bar.bottom, screenBottom: screen.bottom, formTop: form.top, controls};
+        });
+        assert.ok(geometry.height <= 45, `${engine} ${width}×${height}, ${fontSize}px: Tools stays one shallow row`);
+        assert.ok(geometry.screenBottom <= geometry.top, 'Output ends above Tools rather than behind it');
+        assert.ok(geometry.bottom <= geometry.formTop, 'Tools does not cover the input');
+        assert.ok((await outputSpace()).visibleLines >= 1, 'An expanded toolbar leaves a readable output line');
+        for (const control of geometry.controls) {
+          assert.ok(control.width >= 44 && control.height >= 44, 'Expanded Tools retains full touch targets');
+          assert.ok(Math.abs(control.top - geometry.controls[0].top) <= 1, 'All shortcuts share one row');
+          assert.ok(control.bottom <= geometry.bottom + 1, 'Controls fit the toolbar vertically');
+        }
+        await compact.locator('#next').scrollIntoViewIfNeeded();
+        assert.equal(await compact.locator('#next').evaluate(node => {
+          const rect = node.getBoundingClientRect(), bar = document.querySelector('#command-tools').getBoundingClientRect();
+          return rect.left >= bar.left - 1 && rect.right <= bar.right + 1;
+        }), true, 'Even at enlarged text the last shortcut remains reachable');
+        assert.equal(await compact.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+        await compact.locator('.screen').evaluate(node => { node.scrollTop = node.scrollHeight; });
+        await frames(compact);
+        assert.equal(await compact.locator('.block').last().locator('.inline-command').last().evaluate(node => {
+          const rect = node.getBoundingClientRect(), screen = document.querySelector('.screen').getBoundingClientRect();
+          const bar = document.querySelector('#command-tools').getBoundingClientRect();
+          return rect.top >= screen.top && rect.bottom <= Math.min(screen.bottom, bar.top, innerHeight);
+        }), true, 'The last help example can scroll fully above the controls');
+        await field.press('Escape');
+        assert.equal(await toolbar.isHidden(), true);
+      }
 
       for (const [width, height] of [[320, 180], [320, 200], [844, 220]]) {
         await compact.setViewportSize({width, height});

@@ -4,8 +4,9 @@ import {readFile, realpath} from 'node:fs/promises';
 import {join, sep} from 'node:path';
 import {fileURLToPath, pathToFileURL} from 'node:url';
 import {renderIndex} from './update-readme.mjs';
+import {iconSizes, renderIcon} from './icons.mjs';
 
-const files = new Set(['index.html', 'style.css', 'app.js', 'engine.js', 'routing.js', 'snake.js', 'README.md']);
+const files = new Set(['index.html', 'style.css', 'app.js', 'engine.js', 'routing.js', 'snake.js', 'README.md', ...Object.keys(iconSizes)]);
 const types = {html: 'text/html', css: 'text/css', js: 'text/javascript', md: 'text/plain'};
 
 export async function startServer({root = new URL('../', import.meta.url), port = 0} = {}) {
@@ -21,16 +22,17 @@ export async function startServer({root = new URL('../', import.meta.url), port 
     const name = path === '/' ? 'index.html' : path.slice(1);
     if (!path.startsWith('/') || !files.has(name)) { response.writeHead(404).end(); return; }
     try {
-      const target = join(directory, name);
+      const size = iconSizes[name];
+      const target = join(directory, size ? 'favicon.svg' : name);
       if (await realpath(target) !== target) { response.writeHead(404).end(); return; }
       if (name === 'index.html' && await realpath(join(directory, 'README.md')) !== join(directory, 'README.md')) {
         response.writeHead(404).end(); return;
       }
-      const bytes = name === 'index.html'
+      const bytes = size ? renderIcon(await readFile(target), size) : name === 'index.html'
         ? Buffer.from(await renderIndex(pathToFileURL(directory + sep)))
         : await readFile(target);
       response.writeHead(200, {
-        'Content-Type': `${types[name.split('.').at(-1)]}; charset=utf-8`,
+        'Content-Type': size ? 'image/png' : `${types[name.split('.').at(-1)]}; charset=utf-8`,
         'Content-Length': bytes.length,
         'Cache-Control': 'no-store',
         'X-Content-Type-Options': 'nosniff',

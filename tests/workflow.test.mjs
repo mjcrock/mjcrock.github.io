@@ -1,16 +1,19 @@
 import assert from 'node:assert/strict';
-import {readFileSync, mkdtempSync, cpSync, readdirSync, rmSync, writeFileSync, mkdirSync} from 'node:fs';
+import {readFileSync, mkdtempSync, cpSync, readdirSync, rmSync, writeFileSync, mkdirSync, symlinkSync, existsSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {execFileSync} from 'node:child_process';
 import {test} from 'node:test';
-import {pathToFileURL} from 'node:url';
+import {pathToFileURL, fileURLToPath} from 'node:url';
 import {buildSite} from '../scripts/build.mjs';
+import {renderIcon} from '../scripts/icons.mjs';
 
 const root = new URL('../', import.meta.url);
 const workflow = readFileSync(new URL('.github/workflows/pages.yml', root), 'utf8');
-const publicFiles = ['index.html', 'style.css', 'app.js', 'engine.js', 'routing.js', 'snake.js', 'README.md'];
-const assets = publicFiles.filter(file => /\.(?:css|js)$/.test(file));
+const generatedIcons = {'favicon.png': 64, 'apple-touch-icon.png': 180};
+const publicFiles = ['index.html', 'style.css', 'app.js', 'engine.js', 'routing.js', 'snake.js', 'README.md', ...Object.keys(generatedIcons)];
+const sourceFiles = [...publicFiles.filter(file => !file.endsWith('.png')), 'favicon.svg'];
+const assets = publicFiles.filter(file => /\.(?:css|js|png)$/.test(file));
 const read = path => readFileSync(path, 'utf8');
 const assetPaths = html => [...html.matchAll(/(?:src|href)="([^"/?]+\?v=[a-f0-9]{16})"/g)]
   .map(match => match[1]).sort();
@@ -19,10 +22,11 @@ function fixture(t) {
   const directory = mkdtempSync(join(tmpdir(), 'pages-artifact-'));
   t.after(() => rmSync(directory, {recursive: true, force: true}));
   mkdirSync(join(directory, 'scripts'));
-  for (const file of [...publicFiles, 'markdown.js', 'scripts/update-readme.mjs', 'scripts/build.mjs']) {
+  for (const file of [...sourceFiles, 'markdown.js', 'scripts/update-readme.mjs', 'scripts/build.mjs', 'scripts/icons.mjs', 'package.json', 'package-lock.json']) {
     cpSync(new URL(file, root), join(directory, file));
   }
-  writeFileSync(join(directory, 'package.json'), '{"type":"module"}\n');
+  // Reuse installed build tooling without a second install or copying native binaries.
+  symlinkSync(fileURLToPath(new URL('node_modules/', root)), join(directory, 'node_modules'), 'junction');
   return pathToFileURL(directory + '/');
 }
 
@@ -36,7 +40,9 @@ test('Pages workflow validates source before testing and restricts deployment to
   assert.match(workflow, /needs: build/);
   assert.match(workflow, /persist-credentials: false/);
   assert.match(workflow, /package-manager-cache: false/);
-  assert.doesNotMatch(workflow, /contents: write|pull_request_target|npm install|npm ci|git push/);
+  assert.doesNotMatch(workflow, /contents: write|pull_request_target|npm install|git push/);
+  const install = workflow.indexOf('run: npm ci --include=dev --ignore-scripts --no-audit --no-fund');
+  assert.ok(install >= 0 && install < validation, 'Locked build dependencies install before validation');
   const [build, deploy] = workflow.split('\n  deploy:');
   assert.doesNotMatch(build, /pages: write|id-token: write/);
   assert.match(deploy, /pages: write/);
@@ -52,9 +58,9 @@ test('deployment generates HTML without changing source and stages only public f
   const staging = workflow.match(/- name: Stage public files only\n        run: ([^\n]+)/)[1];
   assert.equal(staging, 'node scripts/build.mjs');
   const project = fixture(t);
-  const before = publicFiles.map(file => read(new URL(file, project)));
-  assert.match(before[0], /<!-- BEGIN GENERATED README -->\r?\n\s*<!-- END GENERATED README -->/);
-  assert.doesNotMatch(before[0], /id="output"|id="readme-source"/);
+  const before = new Map(sourceFiles.map(file => [file, readFileSync(new URL(file, project))]));
+  assert.match(before.get('index.html').toString(), /<!-- BEGIN GENERATED README -->\r?\n\s*<!-- END GENERATED README -->/);
+  assert.doesNotMatch(before.get('index.html').toString(), /id="output"|id="readme-source"/);
   for (const file of ['.DS_Store', '._README.md', 'DEVELOPMENT.md']) {
     writeFileSync(new URL(file, project), 'Private local metadata: never publish.');
   }
@@ -71,6 +77,13 @@ test('deployment generates HTML without changing source and stages only public f
   assert.deepEqual(readdirSync(output, {recursive: true}).sort(), [...publicFiles, '.nojekyll'].sort());
   for (const file of assets) {
     const published = new URL(file, output);
+    if (file.endsWith('.png')) {
+      const bytes = readFileSync(published);
+      assert.deepEqual(bytes, renderIcon(before.get('favicon.svg'), generatedIcons[file]), `${file} is published without binary corruption`);
+      assert.deepEqual([bytes.readUInt32BE(16), bytes.readUInt32BE(20)], [generatedIcons[file], generatedIcons[file]]);
+      assert.equal(existsSync(new URL(file, project)), false, 'Generated PNGs stay out of the source folder');
+      continue;
+    }
     const contents = read(published);
     assert.equal(contents.replace(/\?v=[a-f0-9]{16}(?=['"])/g, ''), read(new URL(file, project)));
     // Entry imports and transitive imports must use the same version as preloads.
@@ -86,9 +99,9 @@ test('deployment generates HTML without changing source and stages only public f
   }
   const raw = generated.match(/<script id="readme-source" type="application\/json">([\s\S]*?)<\/script>/)[1];
   assert.match(generated, /<section class="initial-document" aria-label="README\.md">/);
-  assert.equal(JSON.parse(raw), before.at(-1));
-  assert.equal(read(new URL('README.md', output)), before.at(-1));
-  assert.deepEqual(publicFiles.map(file => read(new URL(file, project))), before);
+  assert.equal(JSON.parse(raw), before.get('README.md').toString());
+  assert.deepEqual(readFileSync(new URL('README.md', output)), before.get('README.md'));
+  assert.deepEqual(sourceFiles.map(file => readFileSync(new URL(file, project))), [...before.values()]);
 });
 
 test('asset URLs are deterministic, change with any runtime asset, and ignore README-only edits', async t => {
@@ -120,8 +133,28 @@ test('build refuses an existing output directory without overwriting its files',
   const output = new URL('_site/', project);
   await buildSite(output, project);
   const paths = [...publicFiles, '.nojekyll'];
-  const before = paths.map(path => read(new URL(path, output)));
+  const before = paths.map(path => readFileSync(new URL(path, output)));
   writeFileSync(new URL('snake.js', project), 'Changed source must not overwrite the existing build.');
   await assert.rejects(buildSite(output, project));
-  assert.deepEqual(paths.map(path => read(new URL(path, output))), before);
+  assert.deepEqual(paths.map(path => readFileSync(new URL(path, output))), before);
+});
+
+test('editing the canonical SVG regenerates both PNGs and versions their deployed URLs', async t => {
+  const project = fixture(t);
+  const first = new URL('before/', project), second = new URL('after/', project);
+  await buildSite(first, project);
+  const svg = read(new URL('favicon.svg', project));
+  const changed = svg.replace('#9dc9e8', '#ffffff');
+  assert.notEqual(changed, svg);
+  writeFileSync(new URL('favicon.svg', project), changed);
+  await buildSite(second, project);
+  const previousURLs = assetPaths(read(new URL('index.html', first)));
+  const nextURLs = assetPaths(read(new URL('index.html', second)));
+  assert.equal(nextURLs.length, assets.length);
+  for (const path of previousURLs) assert.ok(!nextURLs.includes(path), `${path} changes when its icon changes`);
+  for (const name of Object.keys(generatedIcons)) {
+    assert.notDeepEqual(readFileSync(new URL(name, first)), readFileSync(new URL(name, second)), name);
+    assert.equal(existsSync(new URL(name, project)), false);
+  }
+  assert.equal(read(new URL('favicon.svg', project)), changed, 'Build preserves the authored SVG');
 });

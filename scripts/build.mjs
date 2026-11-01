@@ -3,10 +3,13 @@ import {createHash} from 'node:crypto';
 import {copyFile, mkdir, readFile, realpath, writeFile} from 'node:fs/promises';
 import {fileURLToPath} from 'node:url';
 import {renderIndex} from './update-readme.mjs';
+import {iconSizes, renderIcon} from './icons.mjs';
 
 export async function buildSite(destination, root = new URL('../', import.meta.url)) {
   const names = ['style.css', 'app.js', 'engine.js', 'routing.js', 'snake.js'];
   const assets = await Promise.all(names.map(async name => [name, await readFile(new URL(name, root))]));
+  const svg = await readFile(new URL('favicon.svg', root));
+  for (const [name, size] of Object.entries(iconSizes)) assets.push([name, renderIcon(svg, size)]);
   const hash = createHash('sha256');
   for (const [name, bytes] of assets) hash.update(`${name}\0${bytes.length}\0`).update(bytes);
   const version = `?v=${hash.digest('hex').slice(0, 16)}`;
@@ -14,7 +17,7 @@ export async function buildSite(destination, root = new URL('../', import.meta.u
   const boundary = html.indexOf('</head>');
   if (boundary < 0) throw new Error('Expected an HTML head in index.html.');
   let head = html.slice(0, boundary);
-  for (const name of names) {
+  for (const [name] of assets) {
     const reference = `${name === 'app.js' ? 'src' : 'href'}="${name}"`;
     if (head.split(reference).length !== 2) throw new Error(`Expected one asset reference for ${name}.`);
     head = head.replace(reference, reference.replace(name, name + version));
