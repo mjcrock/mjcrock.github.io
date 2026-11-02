@@ -5,7 +5,7 @@ import {readFile} from 'node:fs/promises';
 import {pathToFileURL} from 'node:url';
 import {startServer} from '../scripts/serve.mjs';
 import {checkAlignment} from './alignment-check.mjs';
-import {checkKeyboardHandoff} from './keyboard-check.mjs';
+import {checkKeyboardHandoff, checkOutputResize} from './keyboard-check.mjs';
 
 const playwright = await import(process.env.PLAYWRIGHT_MODULE
   ? pathToFileURL(process.env.PLAYWRIGHT_MODULE).href : 'playwright');
@@ -21,6 +21,7 @@ try {
     try {
       await checkAlignment(browser, url, engine);
       await checkKeyboardHandoff(browser, url, engine);
+      await checkOutputResize(browser, url, engine);
       const page = await browser.newPage({viewport: {width: 1280, height: 900}, reducedMotion: 'reduce'});
       const errors = [], requests = [];
       page.on('pageerror', error => errors.push(String(error)));
@@ -116,7 +117,11 @@ try {
       listing.on('pageerror', error => errors.push(String(error)));
       await listing.goto(url); await listing.locator('.entry').waitFor();
       await listing.locator('#command').fill('ls'); await listing.locator('#command').press('Enter');
+      assert.equal(await listing.locator('.listing-row').textContent(), 'README.md', 'Listing metadata only appears when it adds information');
       await listing.locator('.listing-row').evaluate(row => {
+        const description = document.createElement('span');
+        description.textContent = 'A distinct description';
+        row.append(description);
         const wrapped = row.cloneNode(true);
         wrapped.querySelector('button').textContent = 'a-long-filename-that-wraps-across-several-lines.md';
         wrapped.querySelector('span').textContent = 'A description that wraps onto several lines beside the filename.';
@@ -149,35 +154,60 @@ try {
       }
       await listing.close();
 
-      // A native layout resize must move the frame before the next JS callback.
-      // This checks CSS ownership, not an emulation of iOS keyboard animation.
+      // A native layout resize commits frame and controls in its resize event,
+      // even if the next animation frame is blocked. This does not emulate the
+      // native iOS keyboard compositor.
       const nativeResize = await browser.newPage({viewport: {width: 390, height: 900}, hasTouch: true, reducedMotion: 'reduce'});
       nativeResize.on('pageerror', error => errors.push(String(error)));
       await nativeResize.goto(url); await nativeResize.locator('.entry').waitFor();
       await nativeResize.evaluate(() => {
         document.documentElement.style.fontSize = '24px';
         dispatchEvent(new Event('resize'));
+        window.addEventListener('resize', () => {
+          const terminal = document.querySelector('.terminal'), field = document.querySelector('#command');
+          const output = document.querySelector('.screen').getBoundingClientRect();
+          window.nativeResizeSample = {
+            layoutHeight: innerHeight, visualHeight: visualViewport.height,
+            height: terminal.getBoundingClientRect().height,
+            override: terminal.style.getPropertyValue('--viewport-height'),
+            input: field.getBoundingClientRect().toJSON(), draft: field.value,
+            focused: document.activeElement === field,
+            compact: terminal.classList.contains('compact'),
+            header: document.querySelector('.bar').getBoundingClientRect().height,
+            overlap: output.bottom > document.querySelector('.entry').getBoundingClientRect().top + .5,
+          };
+        });
       });
       await nativeResize.locator('#command').fill('preserved native draft'); await frames(nativeResize);
       for (const height of [300, 900]) {
         await nativeResize.evaluate(() => {
           window.nativeFrame = requestAnimationFrame;
-          window.pendingViewportFrames = [];
-          window.requestAnimationFrame = callback => pendingViewportFrames.push(callback);
+          window.nativeCancelFrame = cancelAnimationFrame;
+          window.pendingViewportFrames = new Map();
+          let nextFrame = 0;
+          window.requestAnimationFrame = callback => {
+            pendingViewportFrames.set(++nextFrame, callback);
+            return nextFrame;
+          };
+          window.cancelAnimationFrame = id => pendingViewportFrames.delete(id);
         });
         await nativeResize.setViewportSize({width: 390, height});
-        const nativeGeometry = await nativeResize.evaluate(() => {
-          const terminal = document.querySelector('.terminal'), field = document.querySelector('#command');
-          return {height: terminal.getBoundingClientRect().height, override: terminal.style.getPropertyValue('--viewport-height'),
-            inputBottom: field.getBoundingClientRect().bottom, draft: field.value};
-        });
-        assert.equal(nativeGeometry.override, '', 'Matching native viewports use CSS height without a JS override');
-        assert.equal(nativeGeometry.height, height - 16, 'Native frame size updates without waiting for JS');
-        assert.ok(nativeGeometry.inputBottom <= height, 'The input remains inside the resized native viewport');
+        await nativeResize.waitForFunction(height => window.nativeResizeSample?.layoutHeight === height, height, {polling: 20});
+        const nativeGeometry = await nativeResize.evaluate(() => nativeResizeSample);
+        assert.ok(Math.abs(nativeGeometry.visualHeight - height) <= 1, 'The native fixture resizes layout and visual viewports together');
+        assert.equal(nativeGeometry.override, `${height}px`, 'Frame height commits with compact controls');
+        assert.equal(nativeGeometry.height, height - 16, 'The resize event updates the native frame without waiting for an animation frame');
+        assert.ok(nativeGeometry.input.bottom <= height && nativeGeometry.input.top >= 0, 'The input remains inside the resized native viewport');
+        assert.ok(nativeGeometry.input.height >= 44, 'Native resizing preserves the full-size input');
+        assert.equal(nativeGeometry.compact, height === 300);
+        assert.equal(nativeGeometry.header === 0, height === 300, 'Header and frame reach final geometry in the same resize event');
+        assert.equal(nativeGeometry.overlap, false);
+        assert.equal(nativeGeometry.focused, true);
         assert.equal(nativeGeometry.draft, 'preserved native draft');
         await nativeResize.evaluate(() => {
           window.requestAnimationFrame = nativeFrame;
-          for (const callback of pendingViewportFrames) callback(performance.now());
+          window.cancelAnimationFrame = nativeCancelFrame;
+          for (const callback of pendingViewportFrames.values()) callback(performance.now());
         });
         await frames(nativeResize);
       }
@@ -592,75 +622,58 @@ try {
         await typing.fill('steady draft');
         const readerScroll = await panning.locator('.screen').evaluate(node => { node.scrollTop = 37; return node.scrollTop; });
         const threshold = Math.max(440, 20 * fontSize);
-        // Both a one-pixel boundary crossing and a single, late keyboard report.
+        // Keyboard geometry commits together. A second chrome animation used
+        // to temporarily enlarge the transcript and clamp its reading position.
         for (const [from, to] of [[threshold + 1, threshold], [900, openHeight], [openHeight, 900]]) {
-          await panning.emulateMedia({reducedMotion: 'reduce'}); await pan(from, 900 - from);
+          await pan(from, 900 - from);
           const stationary = await typing.boundingBox();
-          await panning.emulateMedia({reducedMotion: 'no-preference'});
           await pan(to, 900 - to);
-          const animationCount = await panning.evaluate(() => {
-            window.folds = document.querySelector('.terminal').getAnimations({subtree: true});
-            for (const animation of folds) animation.pause();
-            return folds.length;
-          });
-          assert.ok(animationCount > 0 && animationCount <= 3, 'Only the small header and toolbar regions fold');
-          let previousHeader;
-          for (const progress of [0, .25, .5, .75, 1]) {
-            const state = await panning.evaluate(progress => {
-              for (const animation of folds) {
-                const timing = animation.effect.getTiming();
-                if (timing.duration > 200 || timing.iterations !== 1) throw new Error('Unbounded fold');
-                animation.currentTime = timing.duration * progress;
-              }
-              const field = document.querySelector('#command'), screen = document.querySelector('.screen');
+          const samples = await panning.evaluate(async () => {
+            const field = document.querySelector('#command'), screen = document.querySelector('.screen');
+            const terminal = document.querySelector('.terminal'), header = document.querySelector('.bar');
+            const samples = [];
+            for (let frame = 0; frame < 16; frame++) {
               const rect = screen.getBoundingClientRect(), style = getComputedStyle(screen);
               const entry = document.querySelector('.entry').getBoundingClientRect();
-              return {input: field.getBoundingClientRect().toJSON(), header: document.querySelector('.bar').getBoundingClientRect().height,
-                scroll: screen.scrollTop, focus: document.activeElement === field, draft: field.value,
+              samples.push({input: field.getBoundingClientRect().toJSON(), header: header.getBoundingClientRect().height,
+                output: rect.height, scroll: screen.scrollTop, focus: document.activeElement === field, draft: field.value,
                 lines: (rect.height - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom)) / parseFloat(getComputedStyle(screen.querySelector('.initial-document')).lineHeight),
-                overlap: rect.bottom > entry.top + .5, pageScroll: scrollY};
-            }, progress);
-            assert.ok(Math.abs(state.input.x - stationary.x) < .5 && Math.abs(state.input.y - stationary.y) < .5, engine + ' caret stays stationary throughout fold');
+                overlap: rect.bottom > entry.top + .5, pageScroll: scrollY,
+                animations: terminal.getAnimations({subtree: true}).length});
+              await new Promise(resolve => requestAnimationFrame(resolve));
+            }
+            return samples;
+          });
+          for (const state of samples) {
+            assert.ok(Math.abs(state.input.x - stationary.x) < .5 && Math.abs(state.input.y - stationary.y) < .5, engine + ' caret stays stationary across compact changes');
             assert.ok(Math.abs(state.input.width - stationary.width) < .5 && state.input.height >= 44);
             assert.ok(state.input.top >= 900 - to && state.input.bottom <= 900, 'An abrupt keyboard report cannot clip the input');
-            assert.ok(state.lines >= 3, 'Chrome yields to protected reading space even at the start of a fold');
+            assert.ok(state.lines >= 3, 'Chrome yields to protected reading space');
             assert.equal(state.overlap, false); assert.equal(state.focus, true); assert.equal(state.draft, 'steady draft');
             assert.equal(state.scroll, readerScroll); assert.equal(state.pageScroll, 0);
-            if (previousHeader !== undefined) assert.ok(to < from ? state.header <= previousHeader + .5 : state.header >= previousHeader - .5, 'Header movement is monotonic');
-            previousHeader = state.header;
+            assert.equal(state.animations, 0, 'Keyboard layout has no competing chrome animation');
+            assert.equal(state.header, samples.at(-1).header, 'Header reaches final geometry with the viewport');
+            assert.equal(state.output, samples.at(-1).output, 'Output cannot briefly grow past its final height');
           }
-          await panning.evaluate(() => { for (const animation of folds) animation.finish(); });
-          await frames(panning);
-          assert.equal(await panning.locator('.bar').isHidden(), to <= threshold, 'No partial heading remains at rest');
+          assert.equal(await panning.locator('.bar').isHidden(), to <= threshold, 'No partial heading remains');
         }
-        // Reverse an unfinished fold at the boundary instead of queuing another.
-        await panning.emulateMedia({reducedMotion: 'reduce'}); await pan(threshold + 1, 899 - threshold);
-        await panning.emulateMedia({reducedMotion: 'no-preference'}); await pan(threshold, 900 - threshold);
-        const halfway = await panning.evaluate(() => {
-          for (const animation of document.querySelector('.terminal').getAnimations({subtree: true})) {
-            animation.pause(); animation.currentTime = animation.effect.getTiming().duration / 2;
-          }
-          return document.querySelector('.bar').getBoundingClientRect().height;
-        });
         const fixedInput = await typing.boundingBox();
-        await pan(threshold + 1, 899 - threshold);
-        const reversed = await panning.evaluate(() => {
-          const animations = document.querySelector('.terminal').getAnimations({subtree: true});
-          for (const animation of animations) { animation.pause(); animation.currentTime = 0; }
-          const height = document.querySelector('.bar').getBoundingClientRect().height;
-          for (const animation of animations) animation.finish();
-          return {height, count: animations.length};
-        });
-        assert.ok(Math.abs(reversed.height - halfway) < 1, 'A reversed fold starts from its current position');
-        assert.ok(reversed.count <= 3, 'Rapid direction changes do not accumulate animations');
-        assert.deepEqual(await typing.boundingBox(), fixedInput, 'Reversing motion does not move or resize the input');
-        await pan(openHeight, 900 - openHeight);
-        await panning.emulateMedia({reducedMotion: 'reduce'}); await frames(panning);
-        assert.equal(await panning.locator('.terminal').evaluate(node => node.getAnimations({subtree: true}).length), 0, 'Reduced motion cancels an in-flight fold');
-        const beforeTools = await typing.boundingBox();
-        await panning.locator('#tools-toggle').tap(); await frames(panning);
-        const afterTools = await typing.boundingBox();
-        assert.deepEqual(afterTools, beforeTools, 'Tools opens above the command without moving it');
+        for (const height of [threshold, threshold + 1, threshold, threshold + 1, openHeight]) {
+          await pan(height, 900 - height);
+          assert.deepEqual(await typing.boundingBox(), fixedInput, 'Rapid direction changes do not move or resize the input');
+          assert.equal(await panning.locator('.bar').isHidden(), height <= threshold);
+          assert.equal(await panning.locator('.terminal').evaluate(node => node.getAnimations({subtree: true}).length), 0, 'Rapid changes cannot leave a delayed layout animation');
+        }
+        for (const motion of ['no-preference', 'reduce']) {
+          await panning.emulateMedia({reducedMotion: motion}); await frames(panning);
+          const beforeTools = await typing.boundingBox();
+          for (const open of [true, false]) {
+            await panning.locator('#tools-toggle').tap(); await frames(panning);
+            assert.deepEqual(await typing.boundingBox(), beforeTools, 'Tools toggles above the command without moving it');
+            assert.equal(await panning.locator('#tools-toggle').getAttribute('aria-expanded'), String(open));
+            assert.equal(await panning.locator('.terminal').evaluate(node => node.getAnimations({subtree: true}).length), 0, 'Tools does not resize output again after its layout update');
+          }
+        }
       }
       await panning.close();
       const deep = await browser.newPage({viewport: {width: 390, height: 260}, hasTouch: true, reducedMotion: 'reduce'});

@@ -125,7 +125,11 @@ function renderResult(parent, result) {
       const file = FILES[path];
       const name = path.slice(path.lastIndexOf('/') + 1) + (file.type === 'directory' ? '/' : '');
       const row = element('div', undefined, 'listing-row');
-      row.append(commandButton(`open ${path}`, name), element('span', file.description || file.title));
+      row.append(commandButton(`open ${path}`, name));
+      const description = file.description || file.title;
+      if (description && description !== name && description !== name.replace(/\/$/, '')) {
+        row.append(element('span', description));
+      }
       list.append(row);
     }
     if (!result.entries.length) list.append(element('p', 'This directory is empty.', 'dim'));
@@ -439,11 +443,12 @@ window.addEventListener('hashchange', () => navigate());
   const viewport = window.visualViewport;
   const touch = window.matchMedia?.('(pointer:coarse)');
   const reducedMotion = window.matchMedia?.('(prefers-reduced-motion:reduce)');
-  let pending = false;
+  let pending = 0;
   let opening = 0, anchor = null, dismissed = false;
   const stopOpening = () => { window.clearTimeout(opening); opening = 0; anchor = null; };
   const applyViewport = () => {
-    pending = false;
+    if (pending) cancelAnimationFrame(pending);
+    pending = 0;
     // Pinch zoom shrinks the visual viewport too. Preserve the layout so
     // magnification never masquerades as a keyboard opening or loses text.
     if (viewport?.scale && viewport.scale !== 1) return;
@@ -453,11 +458,15 @@ window.addEventListener('hashchange', () => navigate());
     const top = mobile && !dismissed
       ? Math.max(0, Math.min(viewport?.offsetTop ?? 0, innerHeight - availableHeight)) : 0;
     if (anchor) {
+      // Allow at most 4px of settling relative to the original focus height.
+      // Native content resizing must still release the focus anchor immediately.
+      const layoutResized = Math.abs(innerHeight - anchor.height) > 4 ||
+        (innerHeight !== anchor.height && Math.abs(reportedHeight - innerHeight) <= 1);
       // Keep the native focus target stationary while the browser pans it.
       // Releasing only because the height arrived first creates a second move.
       // After the bounded handoff, fall back if native panning did not reveal
       // the input (also covers later keyboard-size changes without polling).
-      if (!mobile || innerWidth !== anchor.width || innerHeight !== anchor.height ||
+      if (!mobile || innerWidth !== anchor.width || layoutResized ||
           reducedMotion?.matches ||
           (anchor.bottom !== undefined && reportedHeight + top + (window.scrollY || 0) < anchor.bottom - 1)) stopOpening();
     }
@@ -474,12 +483,10 @@ window.addEventListener('hashchange', () => navigate());
       setTools(false);
       if (document.activeElement === toolsToggle) toolbar.querySelector('button').focus({preventScroll: true});
     }
-    // Let native viewport sizing drive the keyboard movement where supported.
-    // Only compensate when the visual viewport differs from the layout viewport
-    // (allowing one pixel of rounding), or when the API is unavailable.
+    // Commit the frame and its controls together. Letting CSS viewport units
+    // resize first can clamp the transcript before compact mode catches up.
     const frameHeight = anchor ? anchor.height - top : availableHeight;
-    const height = mobile && (!viewport || Math.abs(frameHeight - innerHeight) > 1)
-      ? `${frameHeight}px` : '';
+    const height = mobile ? `${frameHeight}px` : '';
     if (terminal.style.getPropertyValue('--viewport-height') !== height) {
       if (height) terminal.style.setProperty('--viewport-height', height);
       else terminal.style.removeProperty('--viewport-height');
@@ -497,8 +504,7 @@ window.addEventListener('hashchange', () => navigate());
   };
   const fit = () => {
     if (pending) return;
-    pending = true;
-    requestAnimationFrame(applyViewport);
+    pending = requestAnimationFrame(applyViewport);
   };
   input.addEventListener('focus', () => {
     stopOpening();
@@ -514,7 +520,7 @@ window.addEventListener('hashchange', () => navigate());
   });
   input.addEventListener('blur', () => {
     stopOpening();
-    // Done can precede the final viewport event. Return layout ownership now,
+    // Done can precede the final viewport event. Use layout height now,
     // letting the native pan unwind instead of canceling it with stale offsets.
     dismissed = terminal.classList.contains('mobile');
     fit();
@@ -524,7 +530,13 @@ window.addEventListener('hashchange', () => navigate());
   viewport?.addEventListener('resize', fit);
   viewport?.addEventListener('scroll', fit);
   touch?.addEventListener?.('change', fit);
-  window.addEventListener('resize', fit);
+  window.addEventListener('resize', () => {
+    // Follow native resizing in this event, keeping frame and controls in step
+    // before paint. Visual-only pan/resize reports remain coalesced below.
+    if (terminal.classList.contains('mobile') &&
+        (!viewport || Math.abs(viewport.height - innerHeight) <= 1)) applyViewport();
+    else fit();
+  });
   // Expose controls only after their initial geometry is ready. A fast first
   // command must not be revealed against a layout that changes next frame.
   applyViewport();

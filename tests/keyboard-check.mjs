@@ -57,7 +57,7 @@ export async function checkKeyboardHandoff(browser, url, engine) {
       const early = await report(300, null);
       near(early.field.y, original.field.y, 'an early height report cannot jump the native focus target');
       assert.equal(early.compact, true, 'The header starts folding without waiting for the native pan');
-      assert.equal(early.override, '');
+      assert.equal(early.override, '900px');
       // Partial pan is intentional: the keyboard can cover bottom padding while
       // leaving the full input visible. It must not cause a second correction.
       const partial = original.field.bottom - 300 + 2;
@@ -78,7 +78,7 @@ export async function checkKeyboardHandoff(browser, url, engine) {
       await page.locator('#command').blur(); await frames();
       for (const top of [partial, 200, 0]) {
         const closing = await report(null, top);
-        assert.equal(closing.override, ''); assert.equal(closing.margin, '');
+        assert.equal(closing.override, '900px'); assert.equal(closing.margin, '');
         near(closing.field.y, original.field.y, 'Done leaves movement to native pan, even with stale height');
       }
       const closed = await report(900, null);
@@ -98,6 +98,17 @@ export async function checkKeyboardHandoff(browser, url, engine) {
       assert.equal(next.visible, true); assert.equal(next.focused, true);
       assert.equal(next.draft, 'preserved draft');
     }
+    // A browser-chrome correction can change the layout height as well. The
+    // previous exact-equality check discarded the anchor, moving this field
+    // down 2px and then up 3px with the real CSS even though it stayed visible.
+    for (const [layout, visual] of [[652, 263], [651, 261], [650, 260], [648, 258], [650, 260]]) {
+      await page.setViewportSize({width: 390, height: layout});
+      const next = await report(visual, 389);
+      near(next.field.y + next.pageScroll, steady.field.y + steady.pageScroll,
+        'a late layout-height correction cannot move the settled input down and back');
+      assert.equal(next.visible, true); assert.equal(next.focused, true);
+      assert.equal(next.draft, 'preserved draft'); assert.equal(next.scroll, steady.scroll);
+    }
     // Native document scrolling changes screen coordinates, not layout ownership.
     await report(260, 370);
     const beforeScroll = await state();
@@ -111,6 +122,27 @@ export async function checkKeyboardHandoff(browser, url, engine) {
     near(afterScroll.field.y + afterScroll.pageScroll, beforeScroll.field.y + beforeScroll.pageScroll,
       'a small page scroll cannot cause a second layout adjustment');
     assert.equal(afterScroll.override, '280px');
+
+    // Before the first native pan, even a one-pixel correction must not return
+    // an anchored target to CSS viewport units and then pull it back again.
+    for (const layout of [649, 651]) {
+      await page.setViewportSize({width: 390, height: 650});
+      await reset();
+      const original = await state();
+      await page.locator('#command').tap();
+      await report(260, 0);
+      await page.setViewportSize({width: 390, height: layout}); await frames();
+      const early = await state();
+      near(early.field.y, original.field.y, 'one-pixel pre-pan corrections retain the focus target');
+      assert.equal(early.override, '650px');
+      const panned = await report(260, 389);
+      near(panned.field.y, original.field.y, 'the later pan cannot undo a CSS rounding move');
+      await page.waitForTimeout(400); await frames();
+      const settled = await state();
+      near(settled.field.y, original.field.y, 'the visibility check preserves the corrected anchor');
+      assert.equal(settled.visible, true); assert.equal(settled.draft, 'preserved draft');
+    }
+    await page.setViewportSize({width: 390, height: 650});
 
     // Previously the three-line minimum overruled the frame height at these
     // boundaries, moving the input down 4–5px and back as height settled.
@@ -183,12 +215,93 @@ export async function checkKeyboardHandoff(browser, url, engine) {
     await reset();
     await page.evaluate(() => { const input = document.querySelector('#command'); input.focus(); input.blur(); });
     const cancelled = await report(300, 600);
-    assert.equal(cancelled.override, ''); assert.equal(cancelled.margin, '');
+    assert.equal(cancelled.override, '900px'); assert.equal(cancelled.margin, '');
     await page.waitForTimeout(400); await frames();
-    assert.equal((await state()).override, '', 'A cancelled opening has no late timeout rebound');
+    assert.equal((await state()).override, '900px', 'A cancelled opening has no late timeout rebound');
     assert.deepEqual(errors, []);
     console.log(`${engine}: separate keyboard-height/pan reports, partial pan, Done, and bounded fallback passed`);
   } finally {
     await page.close();
   }
+}
+
+// Exercise scroll-range clamping near the newest result. Mid-transcript scroll
+// offsets alone miss the temporary expansion caused by delayed control folds.
+export async function checkOutputResize(browser, url, engine) {
+  for (const native of [false, true]) for (const font of [16, 24, 32]) {
+    const page = await browser.newPage({viewport: {width: 390, height: 650}, hasTouch: true});
+    const label = `${engine} ${native ? 'content' : 'visual'} resize ${font}px`;
+    try {
+      if (!native) await page.addInitScript(() => {
+        const viewport = new EventTarget();
+        Object.assign(viewport, {height: innerHeight, offsetTop: 0, scale: 1});
+        Object.defineProperty(window, 'visualViewport', {value: viewport});
+        window.reportViewport = (height, offsetTop) => {
+          Object.assign(viewport, {height, offsetTop});
+          viewport.dispatchEvent(new Event('resize'));
+        };
+      });
+      await page.goto(url); await page.locator('.entry').waitFor();
+      await page.evaluate(font => {
+        document.documentElement.style.fontSize = `${font}px`;
+        dispatchEvent(new Event('resize'));
+        window.outputGeometry = () => {
+          const screen = document.querySelector('.screen'), snake = document.querySelector('.snake');
+          const rect = screen.getBoundingClientRect(), art = snake?.getBoundingClientRect();
+          return {height: rect.height, scroll: screen.scrollTop, max: screen.scrollHeight - screen.clientHeight,
+            top: art ? art.top - rect.top : 0, bottom: art ? art.bottom - rect.top : 0};
+        };
+      }, font);
+      const frames = () => page.evaluate(() => new Promise(done => requestAnimationFrame(() => requestAnimationFrame(done))));
+      const input = page.locator('#command');
+      await frames(); await input.tap();
+      if (native) await page.setViewportSize({width: 390, height: 260});
+      else await page.evaluate(() => reportViewport(260, 389));
+      await page.waitForTimeout(400); await frames();
+      for (const command of ['ls', 'python']) { await input.fill(command); await input.press('Enter'); }
+      // Finish the art via the supported typing interaction, retaining a draft.
+      await input.fill('preserved draft');
+      const opened = await page.evaluate(() => outputGeometry());
+      assert.ok(opened.bottom > opened.height, label + ': the fixture really clips the full-size art with the keyboard open');
+      const recording = page.evaluate(async () => {
+        const samples = [];
+        for (let frame = 0; frame < 24; frame++) {
+          samples.push(outputGeometry());
+          await new Promise(done => requestAnimationFrame(done));
+        }
+        return samples;
+      });
+      await input.blur();
+      if (native) await page.setViewportSize({width: 390, height: 650});
+      else await page.evaluate(() => reportViewport(650, 0));
+      const samples = await recording, closed = samples.at(-1);
+      assert.ok(closed.top >= 0 && closed.bottom <= closed.height + .5,
+        label + ': the whole drawing remains visible once space returns');
+      assert.ok(samples.every(sample => sample.height <= closed.height + .5),
+        label + ': output never temporarily grows beyond its final reading area: ' + JSON.stringify(samples.map(sample => [sample.height, sample.scroll])));
+      assert.ok(Math.abs(closed.scroll - Math.min(opened.scroll, closed.max)) <= 1,
+        label + ': only the final scroll range can constrain the reading position: ' + JSON.stringify({opened, closed}));
+      assert.equal(await input.inputValue(), 'preserved draft');
+      assert.equal(await input.evaluate(node => node === document.activeElement), false);
+
+      // A visitor reading older output keeps that place, including after any
+      // previous animation/handoff deadline. No delayed result reveal may win.
+      await input.tap();
+      if (native) await page.setViewportSize({width: 390, height: 260});
+      else await page.evaluate(() => reportViewport(260, 389));
+      await page.waitForTimeout(400); await frames();
+      const earlier = await page.locator('.screen').evaluate(node => { node.scrollTop = 12; return node.scrollTop; });
+      await input.blur();
+      if (native) await page.setViewportSize({width: 390, height: 650});
+      else await page.evaluate(() => reportViewport(650, 0));
+      await frames();
+      const reading = await page.evaluate(() => outputGeometry());
+      assert.ok(Math.abs(reading.scroll - Math.min(earlier, reading.max)) <= 1, label + ': earlier reading position survives dismissal');
+      const deliberate = await page.locator('.screen').evaluate(node => { node.scrollTop = 5; return node.scrollTop; });
+      await page.waitForTimeout(400); await frames();
+      assert.equal(await page.locator('.screen').evaluate(node => node.scrollTop), deliberate,
+        label + ': a later reader scroll is never restored away');
+    } finally { await page.close(); }
+  }
+  console.log(`${engine}: keyboard dismissal preserves newest and earlier output without a second resize`);
 }
