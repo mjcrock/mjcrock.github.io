@@ -28,6 +28,62 @@ let lastNavigation = '';
 let composing = false;
 let readmeSource;
 
+// Keep the intended passage even when a larger pane clamps its scroll offset.
+// Expected positions distinguish our asynchronous scroll events from reading.
+const reading = (() => {
+  let mark = null, expected = 0, width, height, extent;
+  const sample = () => {
+    expected = screen.scrollTop;
+    width = screen.clientWidth;
+    height = screen.clientHeight;
+    extent = screen.scrollHeight;
+  };
+  const remember = (intent = false) => {
+    const top = screen.scrollTop;
+    if (!intent && (Math.abs(top - expected) < .5 ||
+        screen.clientWidth !== width || screen.clientHeight !== height || screen.scrollHeight !== extent)) return;
+    let node = output;
+    // Transcript children follow visual order. Search only the selected branch,
+    // stopping at text blocks so long documents stay cheap to scroll.
+    while (node.children.length && !/^(P|PRE|H[1-6]|LI|DT|DD)$/.test(node.tagName)) {
+      const children = node.children;
+      let low = 0, high = children.length;
+      while (low < high) {
+        const middle = (low + high) >>> 1;
+        if (children[middle].offsetTop <= top) low = middle + 1;
+        else high = middle;
+      }
+      node = children[Math.max(0, low - 1)];
+    }
+    mark = node === output ? null : {node, offset: node.offsetTop - top};
+    sample();
+  };
+  const restore = (reveal = false) => {
+    if (mark && !output.contains(mark.node)) mark = null;
+    if (mark && (reveal || window.getSelection()?.isCollapsed !== false)) {
+      const target = Math.min(Math.max(0, mark.node.offsetTop - mark.offset),
+        Math.max(0, screen.scrollHeight - screen.clientHeight));
+      // Reassigning an unchanged offset can interrupt touch momentum.
+      if (Math.abs(screen.scrollTop - target) >= .5) screen.scrollTop = target;
+    }
+    sample();
+  };
+  screen.addEventListener('scroll', () => remember(), {passive: true});
+  screen.addEventListener('wheel', () => remember(true), {passive: true});
+  screen.addEventListener('pointerdown', () => remember(true), {passive: true});
+  screen.addEventListener('keydown', event => {
+    if (/^(ArrowUp|ArrowDown|PageUp|PageDown|Home|End| |Tab)$/.test(event.key)) remember(true);
+  });
+  screen.addEventListener('focusin', event => {
+    if (event.target !== mark?.node) remember(true);
+  });
+  return {
+    remember, restore,
+    reveal(node) { mark = {node, offset: 12}; restore(true); },
+    reset() { mark = null; screen.scrollTop = 0; sample(); },
+  };
+})();
+
 function element(tag, text, className) {
   const node = document.createElement(tag);
   if (text !== undefined) node.textContent = text;
@@ -43,10 +99,12 @@ const announce = message => { announcement.textContent = message; };
 const modified = event => event.isComposing || event.ctrlKey || event.metaKey || event.altKey || event.shiftKey;
 const updatePrompt = () => { prompt.textContent = `guest:${displayPath()} $`; };
 
-function setTools(open) {
+function setTools(open, preserve = true) {
   if (terminal.classList.contains('tools-open') === open) return;
+  if (preserve) reading.remember();
   terminal.classList.toggle('tools-open', open);
   toolsToggle.setAttribute('aria-expanded', String(open));
+  if (preserve) reading.restore();
 }
 
 function hideSuggestions() {
@@ -174,7 +232,7 @@ function showResult(result, prefix, raw, mode, showEcho = true) {
   let block;
   if (result.kind === 'clear') {
     output.replaceChildren();
-    screen.scrollTop = 0;
+    reading.reset();
   } else {
     block = element('section', undefined, 'block');
     block.tabIndex = -1;
@@ -189,10 +247,9 @@ function showResult(result, prefix, raw, mode, showEcho = true) {
     if (result.kind === 'snake') snakePlayer.play(body.firstElementChild);
     while (output.children.length > LIMITS.output) output.firstElementChild.remove();
     // Reveal synchronously: a later reader scroll must never be overwritten.
-    screen.scrollTop = Math.max(0, block.offsetTop - 12);
+    reading.reveal(block);
   }
-  if (mode === 'typed') focusInput();
-  else if (mode === 'browse' && block) block.focus({preventScroll: true});
+  if (mode === 'browse' && block) block.focus({preventScroll: true});
   announce(result.kind === 'error' ? result.message : result.kind === 'file'
     ? `Opened ${result.entry.title}.` : result.kind === 'clear' ? 'Output cleared.' : 'Command complete.');
 }
@@ -230,7 +287,7 @@ function rememberDocument(path) {
 function run(raw, mode = 'typed') {
   snakePlayer.finish();
   if (typeof raw !== 'string' || !raw.trim()) return;
-  setTools(false);
+  setTools(false, false);
   hideSuggestions();
   completionAttempted = false;
   const prefix = `guest:${displayPath()} $ `;
@@ -412,7 +469,7 @@ function navigate(initial = false) {
   const cwd = navigationCwd(window.history.state, route.path);
   const signature = routeSignature(route, cwd);
   if (!initial && signature === lastNavigation) return;
-  setTools(false);
+  setTools(false, false);
   snakePlayer.finish();
   lastNavigation = signature;
   session.cwd = cwd;
@@ -423,7 +480,7 @@ function navigate(initial = false) {
     if (!initial) {
       output.replaceChildren(readme.cloneNode(true));
     }
-    screen.scrollTop = 0;
+    reading.reset();
     if (!initial) { screen.focus({preventScroll: true}); announce('README.md. Command history retained.'); }
   } else {
     if (initial) output.replaceChildren();
@@ -444,6 +501,7 @@ window.addEventListener('hashchange', () => navigate());
   const touch = window.matchMedia?.('(pointer:coarse)');
   const reducedMotion = window.matchMedia?.('(prefers-reduced-motion:reduce)');
   let pending = 0;
+  let layoutWidth = 0, layoutFont = 0;
   let opening = 0, anchor = null, dismissed = false;
   const stopOpening = () => { window.clearTimeout(opening); opening = 0; anchor = null; };
   const applyViewport = () => {
@@ -472,29 +530,36 @@ window.addEventListener('hashchange', () => navigate());
     }
     const fontSize = mobile ? parseFloat(getComputedStyle(document.documentElement).fontSize) : 16;
     const compact = mobile && availableHeight <= Math.max(440, 20 * fontSize);
+    const frameHeight = anchor ? anchor.height - top : availableHeight;
+    const height = mobile ? `${frameHeight}px` : '';
+    const margin = top ? `${top}px` : '';
+    const changed = height !== terminal.style.getPropertyValue('--viewport-height') ||
+      margin !== terminal.style.marginTop || compact !== terminal.classList.contains('compact') ||
+      mobile !== terminal.classList.contains('mobile') || innerWidth !== layoutWidth || fontSize !== layoutFont;
+    // Width/font reflow can already have clamped the pane before this event.
+    if (changed && innerWidth === layoutWidth && fontSize === layoutFont) reading.remember();
     if (compact && !terminal.classList.contains('compact') && toolbar.contains(document.activeElement)) {
       hideSuggestions();
-      setTools(true);
+      setTools(true, false);
     }
     terminal.classList.toggle('compact', compact);
     terminal.classList.toggle('mobile', mobile);
-    document.body.classList.toggle('mobile-terminal', mobile);
     if (!compact) {
-      setTools(false);
+      setTools(false, false);
       if (document.activeElement === toolsToggle) toolbar.querySelector('button').focus({preventScroll: true});
     }
     // Commit the frame and its controls together. Letting CSS viewport units
     // resize first can clamp the transcript before compact mode catches up.
-    const frameHeight = anchor ? anchor.height - top : availableHeight;
-    const height = mobile ? `${frameHeight}px` : '';
     if (terminal.style.getPropertyValue('--viewport-height') !== height) {
       if (height) terminal.style.setProperty('--viewport-height', height);
       else terminal.style.removeProperty('--viewport-height');
     }
     // A phone keyboard can pan the visual viewport without scrolling the page.
     // Follow that pan in normal flow, but never follow the reader's page scroll.
-    const margin = top ? `${top}px` : '';
     if (terminal.style.marginTop !== margin) terminal.style.marginTop = margin;
+    if (changed) reading.restore();
+    layoutWidth = innerWidth;
+    layoutFont = fontSize;
     if (anchor && !opening && anchor.bottom === undefined) {
       // Measure once, after this frame's geometry and minimum sizes apply.
       // Document coordinates keep native page scrolling out of layout sizing.

@@ -85,6 +85,9 @@ export async function createApp({root = new URL('../../', import.meta.url), widt
     set textContent(value) { this.replaceChildren(); this._text = String(value); }
     set innerHTML(_) { throw new Error('Unsafe HTML assignment: use textContent/DOM nodes.'); }
     get offsetTop() { metrics.geometryReads++; return this._offsetTop; }
+    get clientWidth() { return this._clientWidth ?? globals.innerWidth; }
+    get clientHeight() { return this._clientHeight ?? 200; }
+    get scrollHeight() { return this._scrollHeight ?? 1e9; }
     getBoundingClientRect() {
       metrics.geometryReads++;
       // Explicit input geometry for viewport logic tests, not a layout model.

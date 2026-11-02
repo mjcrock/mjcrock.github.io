@@ -572,164 +572,194 @@ form:focus-within {
   overflow-wrap: anywhere;
 }
 
-/* Keep mobile geometry stable while the keyboard changes the visible area. */
-body.mobile-terminal {
-  --page-gap: 8px;
-  display: block;
-  min-height: 100dvh;
+/* Establish mobile structure before scripts load. JavaScript supplies only
+   measured viewport geometry and the compact interaction state. */
+@media(max-width:600px),(pointer:coarse) {
+  body {
+    --page-gap: 8px;
+    display: block;
+    min-height: 100dvh;
+  }
+  .terminal {
+    /* The app owns transcript reveal and viewport compensation. */
+    overflow-anchor: none;
+    --entry-inset: 8px;
+    --compact-input-height: max(44px, 1.5rem);
+    --tools-height: max(44px, 1.225rem);
+    width: min(960px, 100%);
+    margin-inline: auto;
+    height: calc(var(--viewport-height, 100dvh) - var(--page-inset-top) - var(--page-inset-bottom));
+    /* One readable line, output padding (16), form (8), entry (17), frame (2). */
+    min-height: calc(1.7rem + var(--compact-input-height) + 43px);
+  }
+  .terminal.tools-open {
+    /* Keep these properties local: inherited variables would restyle the transcript. */
+    min-height: calc(1.7rem + var(--compact-input-height) + var(--tools-height) + 47px);
+  }
+  .terminal .bar {
+    flex: 0 1 auto;
+    min-height: 0;
+    display: grid;
+    grid-template-rows: 1fr;
+    overflow: hidden;
+  }
+  .terminal .bar-clip,.terminal .tools-clip {
+    min-height: 0;
+    overflow: hidden;
+  }
+  .terminal.compact .bar {
+    grid-template-rows: 0fr;
+    opacity: 0;
+  }
+  .terminal .prompt {
+    display: none;
+  }
+  .terminal .screen {
+    /* Preserve reading space during folds, but let it yield before the input moves. */
+    min-height: min(calc(5.1rem + 16px), max(0px, calc(100% - var(--compact-input-height) - 25px)));
+    padding-block: 8px;
+    overscroll-behavior: auto;
+  }
+  .terminal.tools-open .screen {
+    /* Temporarily share reading space with one row of full-size controls. */
+    min-height: min(calc(1.7rem + 16px), max(0px, calc(100% - var(--compact-input-height) - var(--tools-height) - 29px)));
+  }
+  .terminal .entry {
+    flex: 0 1 auto;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    min-height: calc(var(--compact-input-height) + 25px);
+    padding: 8px var(--entry-inset);
+  }
+  .terminal form {
+    flex: none;
+    gap: 8px;
+  }
+  .terminal input {
+    height: var(--compact-input-height);
+  }
+  .terminal .run {
+    min-width: 44px;
+    height: var(--compact-input-height);
+    border: 0;
+  }
+  .terminal input:focus-visible {
+    outline: none;
+  }
+  .terminal form:focus-within {
+    outline-offset: 0;
+  }
+  .terminal .tools-toggle {
+    display: block;
+    visibility: hidden;
+    flex: none;
+    min-width: 44px;
+    min-height: 44px;
+    padding: 0 6px;
+    border: 0;
+    border-radius: 3px;
+    background: transparent;
+    font-size: .875rem;
+    line-height: 1.4;
+  }
+  .terminal.compact .tools-toggle {
+    visibility: visible;
+  }
+  .terminal .tools-shell {
+    order: -1;
+    min-height: 0;
+    flex-shrink: 1;
+    display: grid;
+    grid-template-rows: 1fr;
+  }
+  .terminal.compact:not(.tools-open) .tools-shell {
+    grid-template-rows: 0fr;
+    visibility: hidden;
+  }
+  .terminal.tools-open .tools-shell,.terminal .tools-shell:focus-within {
+    grid-template-rows: 1fr;
+    visibility: visible;
+  }
+  /* Controls and frame settle together. A second height transition temporarily
+     enlarges the transcript and clamps away the reader's scroll position. */
+  .terminal .toolbar {
+    display: flex;
+    flex-wrap: nowrap;
+    justify-content: flex-start;
+    gap: 4px;
+    margin: 0 0 4px;
+    padding-inline: 0;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .terminal .toolbar button {
+    flex: none;
+    min-height: var(--tools-height);
+    padding: 0 calc(var(--content-inset) - var(--entry-inset));
+    border: 0;
+    background: transparent;
+    line-height: 1.4;
+    white-space: nowrap;
+  }
+  .terminal .toolbar button:focus-visible {
+    outline-offset: -2px;
+  }
+  .terminal .keys {
+    gap: 0;
+    margin-left: 0;
+  }
+  .terminal .keys button {
+    min-width: 44px;
+  }
+  .terminal .keys span,.terminal.compact .wide-label {
+    display: none;
+  }
+  .terminal.compact .compact-label {
+    display: inline;
+  }
+  .terminal .tools-toggle[aria-expanded="true"],
+  .terminal .tools-toggle:hover,.terminal .toolbar button:hover {
+    background: var(--raised);
+  }
+  .terminal .completion-panel {
+    max-height: min(12rem, calc(var(--viewport-height, 100dvh) - 80px));
+  }
+  .terminal .focus-show:focus {
+    position: absolute;
+    bottom: 100%;
+    left: var(--entry-inset);
+    right: var(--entry-inset);
+    margin: 0;
+    z-index: 1;
+  }
 }
-.terminal.mobile {
-  /* The app owns transcript reveal and viewport compensation. */
-  overflow-anchor: none;
-  --entry-inset: 8px;
-  --compact-input-height: max(44px, 1.5rem);
-  --tools-height: max(44px, 1.225rem);
-  width: min(960px, 100%);
-  margin-inline: auto;
-  height: calc(var(--viewport-height, 100dvh) - var(--page-inset-top) - var(--page-inset-bottom));
-  /* One readable line, output padding (16), form (8), entry (17), frame (2). */
-  min-height: calc(1.7rem + var(--compact-input-height) + 43px);
-}
-.terminal.mobile.tools-open {
-  /* Keep these properties local: inherited variables would restyle the transcript. */
-  min-height: calc(1.7rem + var(--compact-input-height) + var(--tools-height) + 47px);
-}
-.terminal.mobile .bar {
-  flex: 0 1 auto;
-  min-height: 0;
-  display: grid;
-  grid-template-rows: 1fr;
-  overflow: hidden;
-}
-.terminal.mobile .bar-clip,.terminal.mobile .tools-clip {
-  min-height: 0;
-  overflow: hidden;
-}
-.terminal.mobile.compact .bar {
-  grid-template-rows: 0fr;
-  opacity: 0;
-}
-.terminal.mobile .prompt {
+
+/* Reserve the final control footprint while modules initialize. Hidden controls
+   remain unavailable to pointer, keyboard, and assistive technology. */
+.entry[hidden] {
   display: none;
 }
-.terminal.mobile .screen {
-  /* Preserve reading space during folds, but let it yield before the input moves. */
-  min-height: min(calc(5.1rem + 16px), max(0px, calc(100% - var(--compact-input-height) - 25px)));
-  padding-block: 8px;
-  overscroll-behavior: auto;
-}
-.terminal.mobile.tools-open .screen {
-  /* Temporarily share reading space with one row of full-size controls. */
-  min-height: min(calc(1.7rem + 16px), max(0px, calc(100% - var(--compact-input-height) - var(--tools-height) - 29px)));
-}
-.terminal.mobile .entry {
-  flex: 0 1 auto;
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  min-height: calc(var(--compact-input-height) + 25px);
-  padding: 8px var(--entry-inset);
-}
-.terminal.mobile form {
-  flex: none;
-  gap: 8px;
-}
-.terminal.mobile input {
-  height: var(--compact-input-height);
-}
-.terminal.mobile .run {
-  min-width: 44px;
-  height: var(--compact-input-height);
-  border: 0;
-}
-.terminal.mobile input:focus-visible {
-  outline: none;
-}
-.terminal.mobile form:focus-within {
-  outline-offset: 0;
-}
-.terminal.mobile .tools-toggle {
-  display: block;
-  visibility: hidden;
-  flex: none;
-  min-width: 44px;
-  min-height: 44px;
-  padding: 0 6px;
-  border: 0;
-  border-radius: 3px;
-  background: transparent;
-  font-size: .875rem;
-  line-height: 1.4;
-}
-.terminal.mobile.compact .tools-toggle {
-  visibility: visible;
-}
-.terminal.mobile .tools-shell {
-  order: -1;
-  min-height: 0;
-  flex-shrink: 1;
-  display: grid;
-  grid-template-rows: 1fr;
-}
-.terminal.mobile.compact:not(.tools-open) .tools-shell {
-  grid-template-rows: 0fr;
-  visibility: hidden;
-}
-.terminal.mobile.tools-open .tools-shell,.terminal.mobile .tools-shell:focus-within {
-  grid-template-rows: 1fr;
-  visibility: visible;
-}
-/* Controls and frame settle together. A second height transition temporarily
-   enlarges the transcript and clamps away the reader's scroll position. */
-.terminal.mobile .toolbar {
-  display: flex;
-  flex-wrap: nowrap;
-  justify-content: flex-start;
-  gap: 4px;
-  margin: 0 0 4px;
-  padding-inline: 0;
-  overflow-x: auto;
-  scrollbar-width: none;
-}
-.terminal.mobile .toolbar button {
-  flex: none;
-  min-height: var(--tools-height);
-  padding: 0 calc(var(--content-inset) - var(--entry-inset));
-  border: 0;
-  background: transparent;
-  line-height: 1.4;
-  white-space: nowrap;
-}
-.terminal.mobile .toolbar button:focus-visible {
-  outline-offset: -2px;
-}
-.terminal.mobile .keys {
-  gap: 0;
-  margin-left: 0;
-}
-.terminal.mobile .keys button {
-  min-width: 44px;
-}
-.terminal.mobile .keys span,.terminal.compact .wide-label {
-  display: none;
-}
-.terminal.compact .compact-label {
-  display: inline;
-}
-.terminal.mobile .tools-toggle[aria-expanded="true"],
-.terminal.mobile .tools-toggle:hover,.terminal.mobile .toolbar button:hover {
-  background: var(--raised);
-}
-.terminal.mobile .completion-panel {
-  max-height: min(12rem, calc(var(--viewport-height, 100dvh) - 80px));
-}
-.terminal.mobile .focus-show:focus {
-  position: absolute;
-  bottom: 100%;
-  left: var(--entry-inset);
-  right: var(--entry-inset);
-  margin: 0;
-  z-index: 1;
+@media(scripting:enabled) {
+  .entry[hidden] {
+    display: block;
+    visibility: hidden;
+  }
+  @media(max-width:600px),(pointer:coarse) {
+    .terminal .entry[hidden] {
+      display: flex;
+    }
+    /* Media em follows the visitor's default font, as does :root's 100%. */
+    @media(max-height:440px),(max-height:20em) {
+      .terminal:not(.mobile) .bar {
+        grid-template-rows: 0fr;
+        opacity: 0;
+      }
+      .terminal:not(.mobile) .tools-shell {
+        grid-template-rows: 0fr;
+      }
+    }
+  }
 }
 
 .site-name {

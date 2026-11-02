@@ -15,6 +15,11 @@ configuration in the template.
 
 The site needs no runtime packages or content fetch. The README and its links
 work without JavaScript. Command controls appear once their handlers are ready.
+CSS establishes the mobile structure before initialization. When scripting is
+enabled, the hidden controls reserve their final space without accepting focus
+or appearing in the accessibility tree. With scripting disabled, that space is
+released for reading. Short-screen startup styling follows the browser's default
+text size, matching the page's `100%` root font.
 Generation happens during deployment. Failed tests prevent deployment.
 
 `cat README.md` prints that source exactly, including its final newline.
@@ -169,8 +174,10 @@ scrolls entirely above the controls. At extreme text sizes the toolbar can scrol
 horizontally instead of wrapping. Tapping these controls while
 typing preserves input focus until an action intentionally changes it. Run,
 completion choices, and recalled commands also preserve focus between pointer
-down and click, avoiding a keyboard dismissal followed by immediate reopening. The
-disclosure and completion panel never cover one another. Output prioritizes three
+down and click, avoiding a keyboard dismissal followed by immediate reopening.
+The Run button preserves the current focus: Enter keeps typing active, while running
+a pretyped command after Done leaves the keyboard closed.
+The disclosure and completion panel never cover one another. Output prioritizes three
 text lines with Tools closed, or one while the controls are open, bounded by the
 space left above the full-size controls. It yields space on unusually short
 viewports instead of pushing the input down to enforce three lines. The minimum
@@ -187,6 +194,17 @@ layouts remain scrollable. The offset is bounded by the difference between layou
 and visual viewport heights and clears as the full height returns. The transcript
 has no transform or independent animation. The output owns result-scroll
 coordinates so submitting during viewport changes reveals a consistent position.
+One reading bookmark retains the chosen result or paragraph and its relative
+offset through complete keyboard close/reopen cycles. Browser scroll clamping
+does not overwrite that intent. Deliberate scrolling, pointer interaction, and
+keyboard navigation choose a new passage. Pending scroll events are reconciled
+before resizing; changes to the pane or content dimensions identify automatic
+reflow. Text selection suppresses passive restoration, but an explicit command
+still reveals its result. Clear and navigation reset the bookmark. Unchanged
+viewport reports do not read passage positions or write scroll offsets, and a
+resize reads only the saved passage rather than scanning the transcript. There
+is no new timer, animation loop, or dependency. This preserves a paragraph's
+position through wrapping, not the exact character within a long paragraph.
 Viewport-height updates stop at the output container instead of restyling its
 entire transcript.
 Compact mode retains the frame's flex layout, avoiding an intrinsic-size scan of
