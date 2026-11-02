@@ -114,12 +114,15 @@ draft. Unique completion has no visible success banner; choices and no-match
 feedback overlay the output above the stationary prompt. Without choices arrows
 recall history. Modified/IME keys remain untouched.
 The viewport requests `interactive-widget=resizes-content` so supporting browsers
-can resize the page with the keyboard. When the visual and layout heights agree
-within one pixel, native CSS viewport units own the frame height without a
-JavaScript override. Browsers that resize only the visual viewport retain the
-measured-height fallback. This is progressive enhancement, not a guarantee of
-support in any particular iPhone browser. WebKit can report keyboard geometry
-before or after its native animation; desktop emulation cannot verify that timing.
+can resize the page with the keyboard. The mobile frame and compact controls use
+one sizing update. Allowing CSS viewport units to grow the frame first can clamp
+the transcript's scroll range before the controls return, even without animation.
+When native layout and visual heights agree within one pixel, the window resize
+handler commits their geometry synchronously and cancels any queued update.
+Visual-only viewport resize and pan reports remain coalesced into one animation
+frame. Unchanged heights cause no style writes. Desktop sizing stays in CSS.
+WebKit can report keyboard geometry before or after its native animation;
+desktop emulation cannot verify that timing.
 On mobile focus, the fallback keeps the input's layout position fixed while the
 browser pans it into view. Frame height and top inset change together, so an early
 height report cannot move the browser's focus target a second time. The header
@@ -127,29 +130,40 @@ can still fold immediately. One 350ms safety timeout checks the input once after
 layout; if native panning did not reveal it, measured-height sizing
 resumes. The timeout bounds a missing-pan fallback, not a keyboard animation.
 A partial pan that already reveals the input needs no correction. Later viewport
-changes release the anchor only if they would cover the input or change the layout.
+changes release the anchor only if they would cover the input or require a new layout.
 Small visual-height fluctuations and fractional page scrolling do not switch
-positioning rules. The visibility check uses document coordinates so native page
+positioning rules. While the keyboard reduces only the visual viewport, layout
+height corrections within four CSS pixels of the original focus height also
+retain the native target. The bound stays relative to that original height so
+repeated corrections cannot accumulate. Larger layout changes, width changes,
+and native content resizing (layout and visual heights agree) release it
+immediately; the existing occlusion check still fits an input that would be
+covered. This avoids abandoning a settled input for a tiny late browser-chrome
+correction without adding animation or another timeout. While anchored, even
+subpixel height differences retain the exact target before the first native pan.
+The visibility check uses document coordinates so native page
 scrolling does not become another layout adjustment.
-Done releases the height and inset overrides on blur; stale closing events cannot
-reapply them before the next focus. Programmatic mobile focus permits native
+Done returns to the layout height and clears the pan inset on blur; stale closing
+visual reports cannot reapply the old keyboard geometry before the next focus.
+Programmatic mobile focus permits native
 reveal, and an already focused field is never focused again. No keyboard-height
 prediction, continuous animation, or polling is used. Actual iPhone verification
 is still required: desktop engines cannot reproduce the native keyboard's timing.
 Mobile sizing accounts for safe areas and the visual viewport, preserves layout
-during pinch zoom, and coalesces viewport resize and pan events into one animation
-frame. CSS
+during pinch zoom. CSS
 sizes the output in proportion to text size, with window dimensions as the
 fallback when the visual viewport API is unavailable. Large default
 fonts, short landscape layouts, coarse pointers, and forced colors are supported.
 Narrow and touch-first screens keep the same frame width, padding, input size,
 and command-row position throughout keyboard movement. The mobile toolbar sits
 above the input, so opening or closing it cannot move the caret. With little
-available height, the header and toolbar fold away over 180ms. Only these small
-regions animate, never the viewport dimensions or frame position. The folds can
-reverse without timers and reduced motion skips them. If a browser reports a
-large height change at once, the folding regions shrink before the protected
-input and output space. Tools reveals a shallow row of commands,
+available height, the header and toolbar collapse in the same layout update as
+the frame. Their heights do not animate: a delayed expansion temporarily gives
+the transcript too much space, clamps its scroll offset, and then clips the
+result when the controls return. Committing the final geometry together avoids
+that second reflow without delayed scroll restoration that could override a
+visitor's own scrolling. Tools also reserves its final height immediately.
+Tools reveals a shallow row of commands,
 completion, and history above the input. It reserves its own space so output
 scrolls entirely above the controls. At extreme text sizes the toolbar can scroll
 horizontally instead of wrapping. Tapping these controls while
@@ -182,7 +196,8 @@ Control borders sit outside that inset, and the completion panel follows the
 input box. Explicit input padding and a one-character desktop prompt gap keep
 typed commands aligned with their echoes across browser defaults and text sizes.
 Help and file listings share font-relative columns, capped to leave room for
-descriptions. Listing text keeps the same line height in both columns, including
+descriptions. Redundant titles matching the filename are omitted. Listing text
+keeps the same line height in both columns, including
 wrapped filenames. History retains its shorter number column and shared baseline.
 Opened documents preserve the landing document's typography and touch-link
 spacing without adding another named region inside the command result.

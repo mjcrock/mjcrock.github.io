@@ -679,21 +679,8 @@ body.mobile-terminal {
   grid-template-rows: 1fr;
   visibility: visible;
 }
-/* Fold only the small chrome regions, without animating the viewport or caret.
-   Native CSS reversal handles an interrupted transition. */
-@media(prefers-reduced-motion:no-preference) {
-  .terminal.mobile .bar,.terminal.mobile .tools-shell {
-    transition: grid-template-rows 180ms ease-out, opacity 120ms ease-out;
-  }
-  .terminal.mobile .tools-shell:focus-within {
-    transition: none;
-  }
-}
-@media(prefers-reduced-motion:reduce) {
-  .terminal.mobile .bar,.terminal.mobile .tools-shell {
-    transition: none;
-  }
-}
+/* Controls and frame settle together. A second height transition temporarily
+   enlarges the transcript and clamps away the reader's scroll position. */
 .terminal.mobile .toolbar {
   display: flex;
   flex-wrap: nowrap;

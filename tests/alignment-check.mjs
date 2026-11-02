@@ -59,6 +59,12 @@ export async function checkAlignment(browser, url, engine) {
         // WebKit rounds glyph bounds while the native control retains fractional layout coordinates.
         close(field.x, echoedCommand, label + ' active and echoed command', 1);
       } else close(field.x, rail, label + ' mobile input');
+      assert.equal(await page.locator('.listing-row').textContent(), 'README.md', 'An identical title does not repeat the filename');
+      await page.locator('.listing-row').evaluate(row => {
+        const description = document.createElement('span');
+        description.textContent = 'A distinct description';
+        row.append(description);
+      });
       const filename = await textGeometry(page.locator('.listing-row button'));
       const description = await textGeometry(page.locator('.listing-row span'));
       close(filename.x, rail, label + ' filename'); close(filename.y, description.y, label + ' listing baseline');
