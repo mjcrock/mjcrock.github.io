@@ -6,6 +6,8 @@ import {pathToFileURL} from 'node:url';
 import {startServer} from '../scripts/serve.mjs';
 import {checkAlignment} from './alignment-check.mjs';
 import {checkKeyboardHandoff, checkOutputResize} from './keyboard-check.mjs';
+import {checkReading} from './reading-check.mjs';
+import {checkStartup} from './startup-check.mjs';
 
 const playwright = await import(process.env.PLAYWRIGHT_MODULE
   ? pathToFileURL(process.env.PLAYWRIGHT_MODULE).href : 'playwright');
@@ -22,6 +24,8 @@ try {
       await checkAlignment(browser, url, engine);
       await checkKeyboardHandoff(browser, url, engine);
       await checkOutputResize(browser, url, engine);
+      await checkReading(browser, url, engine);
+      await checkStartup(browser, url, engine);
       const page = await browser.newPage({viewport: {width: 1280, height: 900}, reducedMotion: 'reduce'});
       const errors = [], requests = [];
       page.on('pageerror', error => errors.push(String(error)));
@@ -511,7 +515,11 @@ try {
         }, fontSize);
         await typing.fill('help'); await typing.press('Enter');
         await typing.fill('unfinished command'); await frames(panning);
-        const readerScroll = await panning.locator('.screen').evaluate(node => { node.scrollTop = 37; return node.scrollTop; });
+        const readerScroll = await panning.locator('.screen').evaluate(node => {
+          node.dispatchEvent(new PointerEvent('pointerdown', {pointerType: 'touch', bubbles: true}));
+          node.scrollTop = 37; node.dispatchEvent(new Event('scroll'));
+          return node.scrollTop;
+        });
         // Either resize or scroll can deliver the latest viewport dimensions.
         for (const height of [openHeight + 80, openHeight + 40, openHeight, openHeight + 40, openHeight + 80]) {
           await pan(height, layoutHeight - height, height % 80 ? 'scroll' : 'resize');
@@ -620,7 +628,11 @@ try {
         await panning.evaluate(size => { document.documentElement.style.fontSize = size + 'px'; dispatchEvent(new Event('resize')); }, fontSize);
         for (let n = 0; n < 3; n++) { await typing.fill('x'.repeat(450)); await typing.press('Enter'); }
         await typing.fill('steady draft');
-        const readerScroll = await panning.locator('.screen').evaluate(node => { node.scrollTop = 37; return node.scrollTop; });
+        const readerScroll = await panning.locator('.screen').evaluate(node => {
+          node.dispatchEvent(new PointerEvent('pointerdown', {pointerType: 'touch', bubbles: true}));
+          node.scrollTop = 37; node.dispatchEvent(new Event('scroll'));
+          return node.scrollTop;
+        });
         const threshold = Math.max(440, 20 * fontSize);
         // Keyboard geometry commits together. A second chrome animation used
         // to temporarily enlarge the transcript and clamp its reading position.

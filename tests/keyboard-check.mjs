@@ -40,12 +40,22 @@ export async function checkKeyboardHandoff(browser, url, engine) {
     await page.evaluate(font => {
       document.documentElement.style.fontSize = `${font}px`;
       dispatchEvent(new Event('resize'));
+    }, font);
+    await frames();
+    await page.evaluate(() => {
       document.querySelector('#command').value = 'help';
       document.querySelector('#command-form').requestSubmit();
       document.querySelector('#command').blur();
       document.querySelector('#command').value = 'preserved draft';
-      document.querySelector('.screen').scrollTop = 37;
-    }, font);
+    });
+    await frames();
+    await page.locator('.screen').evaluate(node => {
+      // Reading intent matters even when the large pane clamps this offset to
+      // zero. A bare assignment must not silently cancel latest-result reveal.
+      node.dispatchEvent(new PointerEvent('pointerdown', {bubbles: true, pointerType: 'touch'}));
+      node.scrollTop = 37;
+      node.dispatchEvent(new Event('scroll'));
+    });
     await frames();
   };
   const near = (actual, expected, message) => assert.ok(Math.abs(actual - expected) < .5, `${engine}: ${message} (${actual}, ${expected})`);
@@ -290,14 +300,27 @@ export async function checkOutputResize(browser, url, engine) {
       if (native) await page.setViewportSize({width: 390, height: 260});
       else await page.evaluate(() => reportViewport(260, 389));
       await page.waitForTimeout(400); await frames();
-      const earlier = await page.locator('.screen').evaluate(node => { node.scrollTop = 12; return node.scrollTop; });
+      const reopened = await page.evaluate(() => outputGeometry());
+      assert.ok(Math.abs(reopened.top - opened.top) <= 1,
+        label + ': reopening restores the newest result before the visitor chooses another passage');
+      const earlier = await page.locator('.screen').evaluate(node => {
+        node.dispatchEvent(new PointerEvent('pointerdown', {bubbles: true, pointerType: 'touch'}));
+        node.scrollTop = 12;
+        node.dispatchEvent(new Event('scroll'));
+        return node.scrollTop;
+      });
       await input.blur();
       if (native) await page.setViewportSize({width: 390, height: 650});
       else await page.evaluate(() => reportViewport(650, 0));
       await frames();
       const reading = await page.evaluate(() => outputGeometry());
       assert.ok(Math.abs(reading.scroll - Math.min(earlier, reading.max)) <= 1, label + ': earlier reading position survives dismissal');
-      const deliberate = await page.locator('.screen').evaluate(node => { node.scrollTop = 5; return node.scrollTop; });
+      const deliberate = await page.locator('.screen').evaluate(node => {
+        node.dispatchEvent(new PointerEvent('pointerdown', {bubbles: true, pointerType: 'touch'}));
+        node.scrollTop = 5;
+        node.dispatchEvent(new Event('scroll'));
+        return node.scrollTop;
+      });
       await page.waitForTimeout(400); await frames();
       assert.equal(await page.locator('.screen').evaluate(node => node.scrollTop), deliberate,
         label + ': a later reader scroll is never restored away');

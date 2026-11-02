@@ -22,6 +22,10 @@ const touchFocus = app => {
   app.dispatch(app.input, 'focus');
   app.flushFrame();
 };
+const scrollOutput = (app, top) => {
+  app.screen.scrollTop = top;
+  app.dispatch(app.screen, 'scroll');
+};
 
 test('mobile controls have their final initial geometry before the first animation frame', async () => {
   const app = await createApp({width: 390, height: 260});
@@ -52,16 +56,34 @@ test('startup renders canonical README passively without fake commands, history,
   assert.deepEqual(app.output.lastElementChild.querySelectorAll('button').map(node => node.textContent), ['history']);
 });
 
-test('typed submission prevents navigation, retains the root prompt, and returns focus to input', async () => {
+test('typed submission prevents navigation, retains the root prompt, and preserves input focus', async () => {
   const app = await ready();
+  app.input.focus(); app.resetMetrics();
   assert.equal(app.submit('cd /').defaultPrevented, true);
   assert.equal(app.input.value, '');
   assert.equal(app.prompt.textContent, 'guest:~ $');
   assert.match(app.output.lastElementChild.textContent, /guest:~ \$ cd \//);
   assert.equal(app.document.activeElement, app.input);
-  assert.equal(app.metrics.focusCalls.at(-1).options.preventScroll, true);
+  assert.equal(app.metrics.focusCalls.length, 0, 'Enter needs no new focus call');
   assert.equal(app.announcement.textContent, 'Command complete.');
   assert.equal(app.output.lastElementChild.tabIndex, -1);
+});
+
+test('submitting a pretyped command with the input blurred preserves non-input focus', async () => {
+  for (const [width, height] of [[390, 650], [390, 260], [1000, 800]]) {
+    for (const focused of ['run', 'body']) {
+      const app = await ready({width, height});
+      const target = focused === 'run' ? app.runButton : app.document.body;
+      target.focus(); app.change('python'); app.resetMetrics();
+      assert.equal(app.submit(app.input.value).defaultPrevented, true);
+      assert.equal(app.input.value, '', 'Run still submits and clears the entered command');
+      assert.ok(app.output.lastElementChild.querySelector('.snake'));
+      assert.equal(app.document.activeElement, target, 'Run must not reopen a dismissed keyboard');
+      assert.equal(app.metrics.focusCalls.length, 0);
+      assert.equal(app.pendingFrames, 0, 'Submission starts no keyboard-layout work');
+      assert.equal(app.announcement.textContent, 'Command complete.');
+    }
+  }
 });
 
 test('empty submissions leave output and focus unchanged', async () => {
@@ -399,12 +421,35 @@ test('a user scroll after a result is not overwritten by later animation frames'
   const app = await ready();
   app.submit('help');
   assert.ok(app.screen.scrollTop > 0);
-  app.screen.scrollTop = 47;
-  app.dispatch(app.screen, 'scroll');
+  scrollOutput(app, 47);
   app.flushFrame();
   assert.equal(app.screen.scrollTop, 47);
   app.flushFrame();
   assert.equal(app.screen.scrollTop, 47);
+});
+
+test('explicit command results are revealed during text selection without changing focus', async () => {
+  const app = await ready({width: 390, height: 650});
+  app.submit('help');
+  app.screen.focus();
+  scrollOutput(app, 47);
+  app.selectText('Show this guide');
+  app.resetMetrics();
+  app.panVisualViewport(260, 390); app.flushFrame();
+  assert.equal(app.screen.scrollTop, 47, 'Viewport updates preserve the selection and reader position');
+  assert.equal(app.metrics.geometryReads, 0);
+  assert.equal(app.metrics.scrollWrites, 0);
+  app.submit('pwd');
+  const expectedTop = Math.max(0, app.output.lastElementChild._offsetTop - 12);
+  assert.equal(app.screen.scrollTop, expectedTop, 'An explicit command still reveals its result');
+  assert.equal(app.metrics.geometryReads, 1);
+  assert.equal(app.metrics.scrollWrites, 1);
+  assert.equal(app.document.activeElement, app.screen);
+  assert.equal(app.metrics.focusCalls.length, 0);
+  assert.equal(app.window.getSelection().isCollapsed, false);
+  app.flushFrame();
+  assert.equal(app.screen.scrollTop, expectedTop);
+  assert.equal(app.metrics.scrollWrites, 1, 'No later frame can repeat the reveal');
 });
 
 test('clear removes output immediately and later frames cannot restore an old scroll position', async () => {
@@ -442,7 +487,7 @@ test('a command after clear reveals its own result immediately without deferred 
 test('entering mobile sizing coalesces notifications, avoids redundant writes and releases desktop sizing', async () => {
   const app = await ready();
   assert.equal(app.terminal.style.getPropertyValue('--viewport-height'), '');
-  app.screen.scrollTop = 123;
+  scrollOutput(app, 123);
   app.resetMetrics();
   for (let index = 0; index < 50; index++) app.resize(500, 700);
   assert.equal(app.pendingFrames, 1);
@@ -455,7 +500,7 @@ test('entering mobile sizing coalesces notifications, avoids redundant writes an
   assert.equal(app.metrics.heightWrites, 1, 'Repeated native dimensions must not rewrite the frame height');
   assert.equal(app.screen.scrollTop, 123);
   assert.equal(app.metrics.scrollWrites, 0);
-  assert.equal(app.metrics.geometryReads, 0);
+  assert.equal(app.metrics.geometryReads, 1, 'Only the changed frame reads the saved passage position');
   app.resize(1000, 800);
   app.flushFrame();
   assert.equal(app.terminal.style.getPropertyValue('--viewport-height'), '');
@@ -480,7 +525,7 @@ test('mobile sizing uses reported height while missing visualViewport uses the w
 test('native mobile resizing changes controls before paint and cancels a queued viewport update', async () => {
   for (const fontSize of [16, 24, 32]) {
     const app = await ready({width: 390, height: 700, fontSize});
-    app.change('preserved native draft'); app.screen.scrollTop = 123;
+    app.change('preserved native draft'); scrollOutput(app, 123);
     app.input.focus(); app.dispatch(app.input, 'focus');
     app.panVisualViewport(300, 0);
     assert.equal(app.pendingFrames, 1, 'The earlier visual report is waiting for its frame');
@@ -524,14 +569,15 @@ test('native mobile resizing changes controls before paint and cancels a queued 
     app.flushFrame();
     assert.equal(app.metrics.heightWrites, 2, 'One height commit per native resize, with no intermediate frame');
     assert.equal(app.metrics.offsetWrites, 0);
-    assert.equal(app.metrics.geometryReads, 0); assert.equal(app.metrics.scrollWrites, 0);
+    assert.equal(app.metrics.geometryReads, 2, 'Each native resize reads the saved passage position once');
+    assert.equal(app.metrics.scrollWrites, 0);
     assert.equal(app.metrics.focusCalls.length, 0); assert.equal(app.pendingFrames, 0);
   }
 });
 
 test('visual-only window resize reports still coalesce until their scheduled frame', async () => {
   const app = await ready({width: 390, height: 650});
-  app.input.focus(); app.change('visual draft'); app.screen.scrollTop = 123;
+  app.input.focus(); app.change('visual draft'); scrollOutput(app, 123);
   app.resetMetrics();
   for (let index = 0; index < 50; index++) {
     app.panVisualViewport(260, 390);
@@ -547,14 +593,146 @@ test('visual-only window resize reports still coalesce until their scheduled fra
   assert.equal(app.metrics.heightWrites, 1); assert.equal(app.metrics.offsetWrites, 1);
   assert.equal(app.input.value, 'visual draft'); assert.equal(app.screen.scrollTop, 123);
   assert.equal(app.document.activeElement, app.input);
-  assert.equal(app.metrics.geometryReads, 0); assert.equal(app.metrics.scrollWrites, 0);
+  assert.equal(app.metrics.geometryReads, 1, 'The coalesced frame reads the saved passage position once');
+  assert.equal(app.metrics.scrollWrites, 0);
   assert.equal(app.metrics.focusCalls.length, 0); assert.equal(app.pendingFrames, 0);
+});
+
+test('duplicate viewport reports do no passage or scroll work as the transcript grows', async () => {
+  for (const commands of [1, 40, 200]) {
+    const app = await ready({width: 390, height: 650});
+    for (let index = 0; index < commands; index++) app.submit('help');
+    assert.equal(app.output.children.length, Math.min(commands + 1, 40));
+    app.panVisualViewport(260, 390); app.flushFrame();
+    const top = app.output.lastElementChild._offsetTop - 20;
+    scrollOutput(app, top);
+    app.resetMetrics();
+    for (let index = 0; index < 50; index++) {
+      app.panVisualViewport(260, 390);
+      app.dispatch(app.window, 'resize');
+    }
+    assert.equal(app.pendingFrames, 1);
+    assert.equal(app.metrics.framesScheduled, 1, `${commands} commands still need only one callback`);
+    app.flushFrame();
+    assert.equal(app.screen.scrollTop, top);
+    assert.equal(app.metrics.geometryReads, 0, 'Unchanged geometry must not inspect the saved passage or transcript');
+    assert.equal(app.metrics.heightWrites, 0);
+    assert.equal(app.metrics.offsetWrites, 0);
+    assert.equal(app.metrics.scrollWrites, 0);
+    assert.equal(app.metrics.focusCalls.length, 0);
+    assert.equal(app.metrics.framesScheduled, 1);
+    assert.equal(app.pendingFrames, 0);
+    assert.equal(app.pendingTimers, 0);
+  }
+});
+
+test('seeking a passage in a large document uses logarithmically bounded position reads', async () => {
+  for (const count of [1, 2048, 21845]) {
+    const app = await ready({width: 390, height: 650});
+    const document = app.document.createElement('section');
+    document._offsetTop = 0;
+    const paragraphs = Array.from({length: count}, (_, index) => {
+      const paragraph = app.document.createElement('p');
+      paragraph.textContent = `Passage ${index}`;
+      paragraph._offsetTop = 100 + index * 24;
+      return paragraph;
+    });
+    document.append(...paragraphs);
+    app.output.replaceChildren(document);
+    const passage = paragraphs[Math.floor(count * .75)];
+    const top = passage._offsetTop + 7;
+    app.screen.scrollTop = top;
+    app.resetMetrics();
+    app.dispatch(app.screen, 'pointerdown');
+    assert.ok(app.metrics.geometryReads <= Math.ceil(Math.log2(count + 1)) + 2,
+      `${count} passages must require at most 20 position reads, not a linear scan`);
+    assert.equal(app.metrics.scrollWrites, 0);
+    assert.equal(app.metrics.focusCalls.length, 0);
+
+    passage._offsetTop += 8;
+    app.resetMetrics();
+    app.resize(390, 600); app.flushFrame();
+    assert.equal(app.screen.scrollTop, top + 8, 'Resizing restores the selected paragraph at its original reading offset');
+    assert.equal(app.metrics.geometryReads, 1, 'Restoration reads only the saved paragraph');
+    assert.equal(app.metrics.scrollWrites, 1);
+    assert.equal(app.metrics.focusCalls.length, 0);
+  }
+});
+
+test('passage selection uses the last equal-top child and falls back before the first child', async () => {
+  for (const {offsets, top, selected} of [
+    {offsets: [0, 100, 100, 100, 200], top: 100, selected: 3},
+    {offsets: [100, 200], top: 50, selected: 0},
+  ]) {
+    const app = await ready({width: 390, height: 650});
+    const paragraphs = offsets.map(offset => {
+      const paragraph = app.document.createElement('p');
+      paragraph.textContent = 'Reading passage';
+      paragraph._offsetTop = offset;
+      return paragraph;
+    });
+    app.output.replaceChildren(...paragraphs);
+    app.screen.scrollTop = top;
+    app.resetMetrics();
+    app.dispatch(app.screen, 'pointerdown');
+    assert.ok(app.metrics.geometryReads <= Math.ceil(Math.log2(offsets.length + 1)) + 1);
+    assert.equal(app.metrics.scrollWrites, 0);
+    paragraphs[selected]._offsetTop += 8;
+    app.resetMetrics();
+    app.resize(390, 600); app.flushFrame();
+    assert.equal(app.screen.scrollTop, top + 8, `Expected passage ${selected} for offsets ${offsets}`);
+    assert.equal(app.metrics.geometryReads, 1);
+    assert.equal(app.metrics.scrollWrites, 1);
+    assert.equal(app.metrics.focusCalls.length, 0);
+  }
+});
+
+test('a font-reflow clamp reported before resize cannot replace the intended reading passage', async () => {
+  const app = await ready({width: 390, height: 650, fontSize: 32});
+  const first = app.document.createElement('p');
+  const passage = app.document.createElement('p');
+  first.textContent = 'Earlier output'; first._offsetTop = 0;
+  passage.textContent = 'Current reading passage'; passage._offsetTop = 600;
+  app.output.replaceChildren(first, passage);
+  app.screen._scrollHeight = 1000;
+  scrollOutput(app, 610);
+  app.dispatch(app.screen, 'pointerdown');
+  app.change('preserved draft');
+  app.resetMetrics();
+
+  // Font reflow can shorten content and clamp scroll before resize is handled,
+  // while the scroll pane's width and height both remain unchanged.
+  passage._offsetTop = 250;
+  app.screen._scrollHeight = 500;
+  app.screen._scrollTop = 300;
+  app.globals.getComputedStyle = () => ({fontSize: '24px'});
+  app.dispatch(app.screen, 'scroll');
+  assert.equal(app.metrics.geometryReads, 0, 'The automatic clamp must not become a new reading bookmark');
+  assert.equal(app.metrics.scrollWrites, 0);
+  app.dispatch(app.window, 'resize'); app.flushFrame();
+  assert.equal(app.screen.scrollTop, 260, 'Restore the same passage offset after the shorter reflow');
+  assert.equal(app.metrics.geometryReads, 1);
+  assert.equal(app.metrics.scrollWrites, 1);
+
+  passage._offsetTop = 600;
+  app.screen._scrollHeight = 1000;
+  app.globals.getComputedStyle = () => ({fontSize: '32px'});
+  app.dispatch(app.window, 'resize'); app.flushFrame();
+  assert.equal(app.screen.scrollTop, 610, 'Returning to larger text restores the original reading position');
+  assert.equal(app.metrics.geometryReads, 2);
+  assert.equal(app.metrics.scrollWrites, 2);
+  assert.equal(app.input.value, 'preserved draft');
+  assert.equal(app.metrics.focusCalls.length, 0);
+  assert.equal(app.metrics.heightWrites, 0);
+  assert.equal(app.metrics.offsetWrites, 0);
+  assert.equal(app.pendingFrames, 0);
+  assert.equal(app.pendingTimers, 0);
 });
 
 test('native and visual-only reports share frame sizing without disturbing the reader', async () => {
   const app = await ready({width: 390, height: 650});
   app.input.focus(); app.change('unfinished command');
-  app.screen.scrollTop = 123;
+  scrollOutput(app, 123);
   app.resetMetrics();
   for (const height of [260, 650]) {
     app.resize(390, height); app.flushFrame();
@@ -583,7 +761,7 @@ test('native and visual-only reports share frame sizing without disturbing the r
   assert.equal(app.screen.scrollTop, 123);
   assert.equal(app.metrics.focusCalls.length, 0);
   assert.equal(app.metrics.scrollWrites, 0);
-  assert.equal(app.metrics.geometryReads, 0);
+  assert.equal(app.metrics.geometryReads, 5, 'Each changed frame reads the saved passage position once');
   assert.equal(app.pendingTimers, 0);
 });
 
@@ -611,7 +789,7 @@ test('fractional visual reports retain one sizing owner and repeated values do n
 
 test('a direct touch preserves the native focus target while keyboard height arrives before its pan', async () => {
   const app = await ready({width: 390, height: 650});
-  app.change('unfinished command'); app.screen.scrollTop = 123;
+  app.change('unfinished command'); scrollOutput(app, 123);
   touchFocus(app); app.resetMetrics();
   app.globals.visualViewport.height = 260;
   app.dispatch(app.globals.visualViewport, 'resize'); app.flushFrame();
@@ -632,9 +810,11 @@ test('a direct touch preserves the native focus target while keyboard height arr
   assert.equal(app.input.value, 'unfinished command');
   assert.equal(app.document.activeElement, app.input); assert.equal(app.screen.scrollTop, 123);
   assert.equal(app.metrics.focusCalls.length, 0); assert.equal(app.metrics.scrollWrites, 0);
-  assert.equal(app.metrics.geometryReads, 0); assert.equal(app.pendingTimers, 1);
+  assert.equal(app.metrics.geometryReads, 5, 'Folding controls and each native pan read the saved passage once');
+  assert.equal(app.pendingTimers, 1);
   app.advanceTime(1000); app.flushFrame();
-  assert.equal(app.metrics.geometryReads, 1); assert.equal(app.pendingTimers, 0);
+  assert.equal(app.metrics.geometryReads, 6, 'Settling measures the native focus target once');
+  assert.equal(app.pendingTimers, 0);
   assert.equal(app.metrics.heightWrites, 4, 'Completed native pan leaves no delayed correction');
 });
 
@@ -679,7 +859,7 @@ test('a taller keyboard releases the anchor only when the input would be covered
 
 test('small viewport fluctuations after settling cannot move a visible native focus target', async () => {
   const app = await ready({width: 390, height: 650});
-  touchFocus(app); app.change('steady draft'); app.screen.scrollTop = 37;
+  touchFocus(app); app.change('steady draft'); scrollOutput(app, 37);
   app.panVisualViewport(260, 389); app.flushFrame();
   app.advanceTime(1000); app.flushFrame();
   const timers = app.metrics.timersScheduled;
@@ -719,7 +899,7 @@ test('fractional document scrolling does not discard an already visible partial-
 test('late layout-height corrections keep an already visible keyboard input stationary', async () => {
   for (const elapsed of [300, 400]) {
     const app = await ready({width: 390, height: 650});
-    touchFocus(app); app.change('steady draft'); app.screen.scrollTop = 37;
+    touchFocus(app); app.change('steady draft'); scrollOutput(app, 37);
     app.panVisualViewport(260, 389); app.flushFrame();
     app.input._bottom = 625;
     app.advanceTime(elapsed); app.flushFrame();
@@ -895,7 +1075,7 @@ test('Done restores layout height before the delayed visual viewport close repor
   const app = await ready({width: 390, height: 650});
   touchFocus(app); app.change('preserved draft');
   app.panVisualViewport(260, 390); app.flushFrame();
-  app.screen.scrollTop = 123; app.resetMetrics();
+  scrollOutput(app, 123); app.resetMetrics();
   app.document.activeElement = app.document.body;
   app.dispatch(app.input, 'blur'); app.flushFrame();
   assert.equal(app.terminal.style.getPropertyValue('--viewport-height'), '650px');
@@ -1000,7 +1180,7 @@ test('already focused command actions do not restart native focus or keyboard mo
 test('visual viewport resize and pan coalesce without disturbing typing or reader position', async () => {
   const app = await ready({width: 390, height: 650});
   app.input.focus(); app.change('unfinished command');
-  app.screen.scrollTop = 123;
+  scrollOutput(app, 123);
   app.resetMetrics();
   for (let index = 0; index < 50; index++) app.panVisualViewport(260, 390);
   assert.equal(app.globals.innerHeight, 650, 'Keyboard panning need not resize the layout viewport');
@@ -1020,7 +1200,8 @@ test('visual viewport resize and pan coalesce without disturbing typing or reade
   assert.equal(app.document.activeElement, app.input);
   assert.equal(app.screen.scrollTop, 123);
   assert.equal(app.metrics.focusCalls.length, 0);
-  assert.equal(app.metrics.scrollWrites, 0); assert.equal(app.metrics.geometryReads, 0);
+  assert.equal(app.metrics.scrollWrites, 0);
+  assert.equal(app.metrics.geometryReads, 2, 'Only changed frames read the saved passage position');
   assert.equal(app.pendingTimers, 0);
 });
 
@@ -1053,7 +1234,7 @@ test('viewport compensation follows native panning but does not chase document s
 
 test('viewport panning respects pinch zoom, remains stable on wide touch screens and clears on desktop', async () => {
   const app = await ready({width: 390, height: 650});
-  app.input.focus(); app.change('draft across zoom'); app.screen.scrollTop = 79;
+  app.input.focus(); app.change('draft across zoom'); scrollOutput(app, 79);
   app.panVisualViewport(260, 390); app.flushFrame(); app.resetMetrics();
   app.panVisualViewport(130, 520, 2); app.flushFrame();
   assert.equal(app.terminal.style.marginTop, '390px');
@@ -1076,7 +1257,6 @@ test('viewport panning respects pinch zoom, remains stable on wide touch screens
     'Wide touch frames keep the same viewport positioning outside compact mode');
   assert.equal(tablet.terminal.classList.contains('compact'), false);
   assert.equal(tablet.terminal.classList.contains('mobile'), true);
-  assert.equal(tablet.document.body.classList.contains('mobile-terminal'), true);
   tablet.panVisualViewport(220, 480); tablet.flushFrame();
   tablet.setCoarsePointer(false); tablet.flushFrame();
   assert.equal(tablet.terminal.style.marginTop, '');
@@ -1090,7 +1270,7 @@ test('viewport panning respects pinch zoom, remains stable on wide touch screens
 test('pinch zoom preserves layout, draft and reader position; keyboard sizing resumes at normal scale', async () => {
   const app = await ready({width: 390, height: 650});
   app.change('unfinished');
-  app.screen.scrollTop = 79;
+  scrollOutput(app, 79);
   app.resetMetrics();
   for (const scale of [1.5, 2, 3]) {
     app.resize(390, 650 / scale, scale);
@@ -1456,33 +1636,31 @@ test('browser navigation invalidates visible completion state without deleting i
 test('compact mode follows the visual viewport without changing the draft or reader position', async () => {
   const app = await ready({width: 390, height: 650});
   app.change('unfinished command');
-  app.screen.scrollTop = 123;
+  scrollOutput(app, 123);
   app.resetMetrics();
   for (const [width, height, compact] of [[390, 300, true], [390, 650, false], [390, 300, true], [1000, 300, false]]) {
     app.resize(width, height);
     app.flushFrame();
     assert.equal(app.terminal.classList.contains('compact'), compact, `${width}x${height}`);
     assert.equal(app.terminal.classList.contains('mobile'), width <= 600, `${width}x${height}`);
-    assert.equal(app.document.body.classList.contains('mobile-terminal'), width <= 600, `${width}x${height}`);
     assert.equal(app.input.value, 'unfinished command');
     assert.equal(app.screen.scrollTop, 123);
   }
   assert.equal(app.metrics.scrollWrites, 0);
-  assert.equal(app.metrics.geometryReads, 0);
+  assert.equal(app.metrics.geometryReads, 4, 'Each changed frame reads the saved passage position once');
 });
 
 test('compact layout allows more reading space when text is enlarged', async () => {
   const app = await ready({width: 390, height: 650, fontSize: 32});
   app.input.focus();
   app.change('unfinished command');
-  app.screen.scrollTop = 123;
+  scrollOutput(app, 123);
   app.resetMetrics();
   for (const [height, compact] of [[641, false], [640, true], [450, true], [421, true], [650, false]]) {
     app.resize(390, height);
     app.flushFrame();
     assert.equal(app.terminal.classList.contains('compact'), compact, `${height}px with enlarged text`);
     assert.equal(app.terminal.classList.contains('mobile'), true, 'Keyboard height never switches the mobile frame');
-    assert.equal(app.document.body.classList.contains('mobile-terminal'), true);
     assert.equal(app.terminal.style.getPropertyValue('--viewport-height'), `${height}px`);
     assert.equal(app.input.value, 'unfinished command');
     assert.equal(app.document.activeElement, app.input);
@@ -1490,7 +1668,7 @@ test('compact layout allows more reading space when text is enlarged', async () 
   }
   assert.equal(app.metrics.focusCalls.length, 0);
   assert.equal(app.metrics.scrollWrites, 0);
-  assert.equal(app.metrics.geometryReads, 0);
+  assert.equal(app.metrics.geometryReads, 5, 'Each changed frame reads the saved passage position once');
   const standard = await ready({width: 390, height: 441});
   assert.equal(standard.terminal.classList.contains('compact'), false);
 });
@@ -1499,7 +1677,6 @@ test('wide touch screens receive keyboard sizing while fine-pointer desktops ret
   const app = await ready({width: 844, height: 220, fontSize: 32});
   assert.equal(app.terminal.classList.contains('compact'), false);
   assert.equal(app.terminal.classList.contains('mobile'), false);
-  assert.equal(app.document.body.classList.contains('mobile-terminal'), false);
   assert.equal(app.terminal.style.getPropertyValue('--viewport-height'), '');
   app.input.focus();
   app.change('unfinished');
@@ -1508,19 +1685,16 @@ test('wide touch screens receive keyboard sizing while fine-pointer desktops ret
   app.flushFrame();
   assert.equal(app.terminal.classList.contains('compact'), true);
   assert.equal(app.terminal.classList.contains('mobile'), true);
-  assert.equal(app.document.body.classList.contains('mobile-terminal'), true);
   assert.equal(app.terminal.style.getPropertyValue('--viewport-height'), '220px');
   app.resize(844, 700);
   app.flushFrame();
   assert.equal(app.terminal.classList.contains('compact'), false);
   assert.equal(app.terminal.classList.contains('mobile'), true, 'Closing the keyboard retains the wide touch frame');
-  assert.equal(app.document.body.classList.contains('mobile-terminal'), true);
   assert.equal(app.terminal.style.getPropertyValue('--viewport-height'), '700px');
   app.setCoarsePointer(false);
   app.flushFrame();
   assert.equal(app.terminal.style.getPropertyValue('--viewport-height'), '');
   assert.equal(app.terminal.classList.contains('mobile'), false);
-  assert.equal(app.document.body.classList.contains('mobile-terminal'), false);
   assert.equal(app.input.value, 'unfinished');
   assert.equal(app.document.activeElement, app.input);
   assert.equal(app.metrics.focusCalls.length, 0);
@@ -1595,6 +1769,7 @@ test('pointer activation of Tools keeps an existing input focus without blocking
 test('Run, recall and completion clicks do not blur a focused input before returning to it', async () => {
   for (const [width, height] of [[390, 650], [390, 250], [1000, 800]]) {
     const app = await ready({width, height});
+    app.input.focus();
     app.submit('bash');
     const recovery = app.output.lastElementChild.querySelector('button');
     app.change('h'); app.key('Tab');
@@ -1773,6 +1948,7 @@ test('help shows commands and short examples without introductory or detailed ex
 
 test('the Python surprise keeps one timer and bounded output without adding listeners or navigation', async () => {
   const app = await ready();
+  app.input.focus();
   const listeners = app.metrics.listeners;
   for (let index = 0; index < 60; index++) app.submit(index % 2 ? 'python3' : 'python');
   assert.equal(app.output.children.length, 40);
@@ -1819,6 +1995,7 @@ test('the snake returns the real prompt at 2560ms without moving input or changi
 test('typing, paste and composition finish the snake without losing the input draft', async () => {
   for (const event of ['keydown', 'beforeinput', 'input', 'compositionstart']) {
     const app = await ready();
+    app.input.focus();
     app.submit('python3');
     app.advanceTime(1040);
     app.input.value = 'draft';
