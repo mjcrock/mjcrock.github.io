@@ -5,8 +5,10 @@ import {join, sep} from 'node:path';
 import {fileURLToPath, pathToFileURL} from 'node:url';
 import {renderIndex} from './update-readme.mjs';
 import {iconSizes, renderIcon} from './icons.mjs';
+import {publicPages, documentFiles, runtimeFiles} from './build.mjs';
 
-const files = new Set(['index.html', 'style.css', 'app.js', 'engine.js', 'routing.js', 'snake.js', 'README.md', ...Object.keys(iconSizes)]);
+const files = new Set([...runtimeFiles, ...documentFiles, ...Object.keys(iconSizes)]);
+const pages = new Map(publicPages.flatMap(path => [[path, path], [path + 'index.html', path]]));
 const types = {html: 'text/html', css: 'text/css', js: 'text/javascript', md: 'text/plain'};
 
 export async function startServer({root = new URL('../', import.meta.url), port = 0} = {}) {
@@ -19,17 +21,19 @@ export async function startServer({root = new URL('../', import.meta.url), port 
     }
     // Check the raw path so encoded separators and dot segments cannot expand access.
     const path = request.url.split('?')[0];
-    const name = path === '/' ? 'index.html' : path.slice(1);
-    if (!path.startsWith('/') || !files.has(name)) { response.writeHead(404).end(); return; }
+    if (path !== '/' && publicPages.includes(path + '/')) {
+      response.writeHead(308, {Location: path + '/' + request.url.slice(path.length)}).end();
+      return;
+    }
+    const page = pages.get(path);
+    const name = page ? 'index.html' : path.slice(1);
+    if (!path.startsWith('/') || (!page && !files.has(name))) { response.writeHead(404).end(); return; }
     try {
       const size = iconSizes[name];
       const target = join(directory, size ? 'favicon.svg' : name);
       if (await realpath(target) !== target) { response.writeHead(404).end(); return; }
-      if (name === 'index.html' && await realpath(join(directory, 'README.md')) !== join(directory, 'README.md')) {
-        response.writeHead(404).end(); return;
-      }
-      const bytes = size ? renderIcon(await readFile(target), size) : name === 'index.html'
-        ? Buffer.from(await renderIndex(pathToFileURL(directory + sep)))
+      const bytes = size ? renderIcon(await readFile(target), size) : page
+        ? Buffer.from(await renderIndex(pathToFileURL(directory + sep), page))
         : await readFile(target);
       response.writeHead(200, {
         'Content-Type': size ? 'image/png' : `${types[name.split('.').at(-1)]}; charset=utf-8`,

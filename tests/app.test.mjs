@@ -5,6 +5,15 @@ import {markdownBlocks} from '../markdown.js';
 import {createApp} from './helpers/dom.mjs';
 
 const readme = await readFile(new URL('../README.md', import.meta.url), 'utf8');
+const textbookPath = '/projects/textbook/README.md';
+const textbookTitle = 'Mathematics for Cyber Threat Detection';
+const assertStandaloneTextbook = app => {
+  assert.equal(app.output.children.length, 1, 'Normal navigation displays one authored page');
+  const page = app.output.firstElementChild;
+  assert.ok(page.classList.contains('initial-document'));
+  assert.equal(page.querySelector('h1').textContent, textbookTitle);
+  assert.equal(app.output.querySelector('.echo,.file-path,.initial-directory'), null);
+};
 
 const renderedText = markdownBlocks(readme).flatMap(block => block.parts.map(part => part.text)).join('');
 
@@ -67,6 +76,197 @@ test('typed submission prevents navigation, retains the root prompt, and preserv
   assert.equal(app.metrics.focusCalls.length, 0, 'Enter needs no new focus call');
   assert.equal(app.announcement.textContent, 'Command complete.');
   assert.equal(app.output.lastElementChild.tabIndex, -1);
+});
+
+test('clean project URLs retain their static content without startup commands or focus changes', async () => {
+  for (const [pathname, route, cwd] of [
+    ['/projects/', '/projects', '/projects'],
+    ['/projects/textbook/', textbookPath, '/projects/textbook'],
+    ['/projects/textbook/index.html', textbookPath, '/projects/textbook'],
+  ]) {
+    const app = await createApp({pathname, width: 390, height: 260});
+    assert.equal(app.output.firstElementChild, app.initialOutput, 'Initialization must preserve the already readable view');
+    assert.equal(app.output.dataset.route, route);
+    assert.equal(app.output.querySelector('.echo'), null);
+    assert.equal(app.output.querySelector('.block'), null);
+    assert.equal(app.document.activeElement, app.document.body);
+    assert.equal(app.metrics.focusCalls.length, 0);
+    assert.equal(app.pendingFrames, 0);
+    assert.equal(app.history.length, 1);
+    assert.equal(app.prompt.textContent, `guest:~${cwd} $`);
+    assert.ok(app.output.textContent.includes(pathname === '/projects/' ? 'Textbook' : textbookTitle));
+    app.change('draft'); app.key('ArrowUp');
+    assert.equal(app.input.value, 'draft', 'Loading a project page cannot invent command history');
+  }
+});
+
+test('the textbook participates in listing, directories, completion, reading and exact cat output', async () => {
+  const app = await ready();
+  const textbook = await readFile(new URL('../projects/textbook/README.md', import.meta.url), 'utf8');
+  app.submit('ls');
+  assert.ok(app.output.lastElementChild.querySelectorAll('button').some(node => node.dataset.command === 'open /projects'));
+  app.submit('cd projects');
+  assert.equal(app.prompt.textContent, 'guest:~/projects $');
+  app.change('open t'); app.key('Tab');
+  assert.equal(app.input.value, 'open textbook/');
+  app.submit('open textbook');
+  assert.equal(app.location.pathname, '/', 'Opening a directory still browses files without pushing a page URL');
+  assert.equal(app.prompt.textContent, 'guest:~/projects $');
+  assert.ok(app.output.lastElementChild.querySelectorAll('button').some(node => node.dataset.command === `open ${textbookPath}`));
+  app.submit('cd textbook');
+  assert.equal(app.prompt.textContent, 'guest:~/projects/textbook $');
+  app.change('cat R'); app.key('Tab');
+  assert.equal(app.input.value, 'cat README.md');
+  app.submit('cat README.md');
+  assert.equal(app.output.lastElementChild.querySelector('pre').textContent, textbook);
+  assert.equal(app.location.pathname, '/');
+  app.submit('open README.md');
+  assert.equal(app.location.pathname, '/projects/textbook/');
+  assert.equal(app.location.hash, '');
+  assert.equal(app.prompt.textContent, 'guest:~/projects/textbook $');
+  const opened = app.output.lastElementChild;
+  assert.equal(opened.querySelectorAll('h1,h2,h3').filter(node => node.textContent === textbookTitle).length, 1,
+    'The project title must appear only once in the opened document');
+  assert.equal(opened.querySelector('.initial-document').querySelector('p').textContent, 'Textbook · In progress');
+  assert.ok(opened.querySelector('.echo'), 'A CLI open appends the command to the transcript');
+  const permalink = opened.querySelector('.document-link');
+  assert.equal(permalink.href, '/projects/textbook/');
+  assert.ok(app.document.title.includes(textbookTitle));
+  const length = app.history.length;
+  assert.equal(app.click(permalink).defaultPrevented, true);
+  assert.equal(app.history.length, length, 'The permalink already identifies the current URL');
+  assertStandaloneTextbook(app);
+});
+
+test('clearing or mutating one document cannot replace another document or its source', async () => {
+  const app = await ready({pathname: '/projects/textbook/'});
+  const textbook = await readFile(new URL('../projects/textbook/README.md', import.meta.url), 'utf8');
+  app.output.firstElementChild.textContent = 'Local view mutation';
+  app.submit('clear'); app.submit('open README.md');
+  assert.ok(app.output.lastElementChild.textContent.includes(textbookTitle));
+  app.submit('cat README.md');
+  assert.equal(app.output.lastElementChild.querySelector('pre').textContent, textbook);
+  app.submit('open /README.md');
+  assert.equal(app.location.pathname, '/');
+  assert.equal(app.location.hash, '#/README.md');
+  assert.equal(app.output.lastElementChild.querySelector('.initial-document').textContent, renderedText);
+  app.submit('cat /README.md');
+  assert.equal(app.output.lastElementChild.querySelector('pre').textContent, readme);
+  assert.equal(app.prompt.textContent, 'guest:~/projects/textbook $', 'Reading another document never changes cwd');
+});
+
+test('returning to a directly loaded project directory restores an independent copy of its listing', async () => {
+  const app = await ready({pathname: '/projects/'});
+  const first = app.output.firstElementChild;
+  const canonical = first.textContent;
+  const projectLink = first.querySelector('a');
+  first.querySelector('h2').textContent = 'Local view mutation';
+  app.click(projectLink);
+  assertStandaloneTextbook(app);
+  app.history.back();
+  const restored = app.output.firstElementChild;
+  assert.notEqual(restored, first);
+  assert.notEqual(restored.querySelector('a'), projectLink);
+  assert.equal(restored.textContent, canonical);
+  assert.equal(restored.querySelector('a').href, '/projects/textbook/');
+});
+
+test('cross-document Back and Forward restore each saved directory without replaying commands', async () => {
+  const app = await ready();
+  app.submit('cd projects/textbook');
+  app.submit('open README.md');
+  app.submit('cd /');
+  app.submit('open README.md');
+  app.change('unfinished draft');
+  app.history.back();
+  assert.equal(app.location.pathname, '/projects/textbook/');
+  assert.equal(app.location.hash, '');
+  assert.equal(app.prompt.textContent, 'guest:~ $', 'Back restores the cwd last used at the textbook URL');
+  assertStandaloneTextbook(app);
+  assert.equal(app.input.value, 'unfinished draft');
+  app.history.back();
+  assert.equal(app.location.pathname, '/');
+  assert.equal(app.location.hash, '');
+  assert.equal(app.prompt.textContent, 'guest:~/projects/textbook $');
+  assert.equal(app.output.firstElementChild.textContent, renderedText);
+  app.history.forward();
+  assertStandaloneTextbook(app);
+  app.history.forward();
+  assert.equal(app.location.hash, '#/README.md');
+  assert.equal(app.input.value, 'unfinished draft');
+  app.submit('history');
+  assert.deepEqual(app.output.lastElementChild.querySelectorAll('button').map(node => node.textContent),
+    ['cd projects/textbook', 'open README.md', 'cd /', 'open README.md', 'history']);
+});
+
+test('normal project links preserve drafts and browser history without opening the keyboard', async () => {
+  const app = await ready();
+  app.change('unfinished draft');
+  const nav = app.document.querySelector('.site-nav');
+  const projects = nav.querySelectorAll('a').find(link => link.href === '/projects/');
+  assert.ok(projects, 'Projects must be discoverable without a terminal command');
+  assert.equal(app.click(projects).defaultPrevented, true);
+  assert.equal(app.location.pathname, '/projects/');
+  assert.equal(app.prompt.textContent, 'guest:~/projects $');
+  assert.equal(app.history.length, 2);
+  assert.equal(app.click(projects).defaultPrevented, true);
+  assert.equal(app.history.length, 2, 'Revisiting the current page must not require an extra Back');
+  const textbook = app.output.querySelectorAll('a').find(link => link.href === '/projects/textbook/');
+  assert.ok(textbook);
+  assert.equal(app.click(textbook).defaultPrevented, true);
+  assert.equal(app.location.pathname, '/projects/textbook/');
+  assert.equal(app.prompt.textContent, 'guest:~/projects/textbook $');
+  assertStandaloneTextbook(app);
+  assert.equal(app.input.value, 'unfinished draft');
+  assert.notEqual(app.document.activeElement, app.input);
+  assert.equal(app.metrics.focusCalls.some(call => call.node === app.input), false);
+  app.history.back();
+  assert.equal(app.location.pathname, '/projects/');
+  assert.equal(app.prompt.textContent, 'guest:~/projects $');
+  assert.equal(app.input.value, 'unfinished draft');
+  app.history.back();
+  assert.equal(app.location.pathname, '/');
+  assert.equal(app.prompt.textContent, 'guest:~ $');
+  assert.equal(app.output.firstElementChild.textContent, renderedText);
+  app.submit('history');
+  assert.deepEqual(app.output.lastElementChild.querySelectorAll('button').map(node => node.textContent), ['history']);
+});
+
+test('project link enhancement leaves modified, external, target and download navigation native', async () => {
+  for (const modification of [{ctrlKey: true}, {metaKey: true}, {shiftKey: true}, {altKey: true}, {button: 1}]) {
+    const app = await ready();
+    const projects = app.document.querySelector('.site-nav').querySelectorAll('a').find(link => link.href === '/projects/');
+    assert.equal(app.dispatch(projects, 'click', modification).defaultPrevented, false);
+    assert.equal(app.location.pathname, '/');
+    assert.equal(app.history.length, 1);
+  }
+  for (const attributes of [{target: '_blank'}, {download: ''}, {href: 'https://example.com/projects/'}]) {
+    const app = await ready();
+    const projects = app.document.querySelector('.site-nav').querySelectorAll('a').find(link => link.href === '/projects/');
+    for (const [name, value] of Object.entries(attributes)) projects.setAttribute(name, value);
+    assert.equal(app.click(projects).defaultPrevented, false);
+    assert.equal(app.location.pathname, '/');
+    assert.equal(app.history.length, 1);
+  }
+  const app = await ready();
+  const identity = app.output.querySelector('a');
+  assert.equal(app.click(identity).defaultPrevented, false);
+  assert.equal(app.history.length, 1);
+});
+
+test('published project links fall back to native navigation when browser history is unavailable', async () => {
+  const app = await ready();
+  app.change('preserved draft');
+  app.history.failWrites = true;
+  const projects = app.document.querySelector('.site-nav').querySelectorAll('a').find(link => link.href === '/projects/');
+  const initial = app.output.firstElementChild;
+  assert.equal(app.click(projects).defaultPrevented, false, 'A failed enhancement must not turn the real page link into a dead control');
+  assert.equal(app.output.firstElementChild, initial);
+  assert.equal(app.prompt.textContent, 'guest:~ $');
+  assert.equal(app.input.value, 'preserved draft');
+  assert.equal(app.document.activeElement, app.document.body);
+  app.submit('pwd');
+  assert.equal(app.output.lastElementChild.querySelector('.result').textContent, '/');
 });
 
 test('submitting a pretyped command with the input blurred preserves non-input focus', async () => {
@@ -1319,7 +1519,7 @@ test('repeated README views own independent nodes and retain exact raw cat after
   assert.equal(opened.textContent, text);
   const permalink = body.querySelector('.file-path').querySelector('a');
   assert.equal(opened.contains(permalink), false, 'Document metadata stays outside the authored-content styling');
-  assert.equal(permalink.href, '#/README.md');
+  assert.equal(permalink.href, '/#/README.md');
   const firstLink = first.querySelector('a');
   const nextLink = opened.querySelectorAll('a').find(link => link.href === firstLink.href);
   assert.ok(nextLink);
@@ -1493,7 +1693,7 @@ test('open creates a document link while directory and cat operations do not pus
   assert.equal(app.location.hash, '#/README.md');
   assert.equal(app.history.length, 2);
   const link = app.output.lastElementChild.querySelector('.document-link');
-  assert.equal(link.href, '#/README.md');
+  assert.equal(link.href, '/#/README.md');
   assert.equal(app.output.lastElementChild.querySelector('.file-title').textContent, 'README.md');
   app.submit('open README.md');
   assert.equal(app.history.length, 2, 'Same document must not add a duplicate URL entry');

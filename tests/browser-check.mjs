@@ -8,6 +8,7 @@ import {checkAlignment} from './alignment-check.mjs';
 import {checkKeyboardHandoff, checkOutputResize} from './keyboard-check.mjs';
 import {checkReading} from './reading-check.mjs';
 import {checkStartup} from './startup-check.mjs';
+import {checkTextbook} from './textbook-check.mjs';
 
 const playwright = await import(process.env.PLAYWRIGHT_MODULE
   ? pathToFileURL(process.env.PLAYWRIGHT_MODULE).href : 'playwright');
@@ -21,6 +22,7 @@ try {
   for (const engine of engines) {
     const browser = await playwright[engine].launch({headless: true, timeout: 20000});
     try {
+      await checkTextbook(browser, url, engine);
       await checkAlignment(browser, url, engine);
       await checkKeyboardHandoff(browser, url, engine);
       await checkOutputResize(browser, url, engine);
@@ -71,7 +73,7 @@ try {
       await page.getByRole('button', {name: 'open README.md', exact: true}).click();
       assert.equal(await input.inputValue(), 'draft while browsing', 'Opening a document preserves an unfinished command');
       await run('ls /');
-      assert.equal(await page.locator('.listing-row button').last().textContent(), 'README.md');
+      assert.deepEqual(await page.locator('.block').last().locator('.listing-row button').allTextContents(), ['README.md', 'projects/']);
       await input.fill('draft');
       await page.goBack();
       await page.waitForFunction(() => location.hash === '');
@@ -121,8 +123,8 @@ try {
       listing.on('pageerror', error => errors.push(String(error)));
       await listing.goto(url); await listing.locator('.entry').waitFor();
       await listing.locator('#command').fill('ls'); await listing.locator('#command').press('Enter');
-      assert.equal(await listing.locator('.listing-row').textContent(), 'README.md', 'Listing metadata only appears when it adds information');
-      await listing.locator('.listing-row').evaluate(row => {
+      assert.equal(await listing.locator('.listing-row').first().textContent(), 'README.md', 'Listing metadata only appears when it adds information');
+      await listing.locator('.listing-row').first().evaluate(row => {
         const description = document.createElement('span');
         description.textContent = 'A distinct description';
         row.append(description);
@@ -153,7 +155,7 @@ try {
           assert.ok(Math.abs(row.name.top - row.description.top) < .5, `${engine} listing/history text aligns at ${fontSize}px`);
           assert.ok(row.height >= 44, 'Aligned filenames and recalled commands retain full touch targets');
         }
-        assert.ok(rows[1].name.lines > 1 && rows[1].description.lines > 1, 'The alignment fixture exercises wrapping in both columns');
+        assert.ok(rows.some(row => row.name.lines > 1 && row.description.lines > 1), 'The alignment fixture exercises wrapping in both columns');
         assert.ok(rows.at(-1).description.lines > 1, 'The history fixture exercises a wrapped command');
       }
       await listing.close();
@@ -692,7 +694,7 @@ try {
       await deep.route('**/', async route => {
         const response = await route.fetch();
         const opening = '<section class="initial-document" aria-label="README.md">';
-        const body = (await response.text()).replace(opening, opening + '<p>A longer public document exercises initial scrolling.</p>'.repeat(80));
+        const body = (await response.text()).replaceAll(opening, opening + '<p>A longer public document exercises initial scrolling.</p>'.repeat(80));
         await route.fulfill({response, body});
       });
       await deep.goto(url + '#/README.md'); await deep.locator('.entry').waitFor();
@@ -702,7 +704,11 @@ try {
       });
       assert.equal(firstView.overflows, true, 'The initial deep-link fixture really needs scrolling');
       assert.ok(firstView.top >= 0 && firstView.top <= 12, 'A first deep link is positioned using final mobile geometry');
-      assert.equal(firstView.scroll, 0, 'Startup cannot leave a delayed scroll correction');
+      // The site links precede the transcript, so revealing a legacy fragment
+      // can scroll immediately. Its final position must not change next frame.
+      await frames(deep);
+      assert.equal(await deep.locator('.screen').evaluate(node => node.scrollTop), firstView.scroll,
+        'Startup cannot leave a delayed scroll correction');
       await deep.close();
 
       const scrollbars = await browser.newPage({viewport: {width: 1280, height: 900}});

@@ -219,6 +219,11 @@ form {
 }
 
 .prompt {
+  /* A nested path must leave room to type in a narrow desktop window. */
+  flex: none;
+  max-width: 45%;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--rose);
   font-size: .9rem;
@@ -791,6 +796,46 @@ form:focus-within {
 
 .initial-document p + p {
   margin-top: .75rem;
+}
+
+.site-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 1.5rem;
+  margin-bottom: 1rem;
+  font-size: .85rem;
+}
+.site-nav a,.project-row > a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  min-width: 44px;
+}
+.site-nav [aria-current] {
+  color: var(--ink);
+}
+.initial-directory {
+  font-size: .95rem;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+.initial-document h1,.initial-directory h2 {
+  margin: 0 0 .75em;
+  font-size: 1.2em;
+  font-weight: 500;
+  line-height: 1.35;
+}
+.project-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.project-row {
+  margin-bottom: 1rem;
+}
+.project-row p {
+  margin: 0;
+  font-size: .85em;
 }
 
 /* Tablets can use the wide layout while still needing generous touch targets. */
