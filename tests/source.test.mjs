@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import {readFileSync, existsSync} from 'node:fs';
 import {test} from 'node:test';
-import {LIMITS} from '../engine.js';
+import {FILES, LIMITS} from '../engine.js';
 import {renderIndex} from '../scripts/update-readme.mjs';
 
 const root = new URL('../', import.meta.url);
@@ -24,6 +24,10 @@ test('all runtime resources are local and exist; legacy stylesheet is removed', 
   assert.ok(!existsSync(new URL('assets/styles.css', root)));
   assert.ok(!/assets\/styles\.css/.test(html));
   for (const [, href] of html.matchAll(/<a\b[^>]*href="([^"]+)"/g)) {
+    if (href.startsWith('/')) {
+      assert.ok(Object.values(FILES).some(entry => entry.url === href), 'Local navigation stays within the public catalog');
+      continue;
+    }
     const url = new URL(href);
     assert.equal(url.protocol, 'https:');
     assert.equal(url.username, '');
@@ -58,9 +62,12 @@ test('CSP allows only same-origin loading and no inline/eval execution', () => {
   assert.equal(scripts.length, 2, 'One module and one inert data block are expected.');
   for (const [, attributes, body] of scripts) {
     if (/type="application\/json"/.test(attributes)) {
-      assert.match(attributes, /id="readme-source"/);
+      assert.match(attributes, /id="document-sources"/);
       assert.doesNotMatch(body, /</);
-      assert.equal(typeof JSON.parse(body), 'string');
+      const sources = JSON.parse(body);
+      const paths = Object.keys(FILES).filter(path => FILES[path].type === 'file');
+      assert.deepEqual(Object.keys(sources), paths);
+      for (const path of paths) assert.equal(sources[path], read(path.slice(1)));
     } else {
       assert.match(attributes, /type="module"/);
       assert.match(attributes, /src="app\.js"/);

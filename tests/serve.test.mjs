@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
 import {request} from 'node:http';
-import {mkdtemp, readFile, readdir, rm, writeFile, symlink} from 'node:fs/promises';
+import {mkdtemp, mkdir, readFile, readdir, rm, writeFile, symlink} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {startServer} from '../scripts/serve.mjs';
@@ -29,6 +29,24 @@ test('preview serves only public files on loopback and rejects private or encode
     const head = await get('/README.md', 'HEAD');
     assert.equal(head.status, 200);
     assert.equal(head.body.length, 0);
+    for (const path of ['/projects/', '/projects/index.html', '/projects/textbook/', '/projects/textbook/index.html']) {
+      const page = await get(path);
+      assert.equal(page.status, 200, path);
+      assert.match(page.headers['content-type'], /^text\/html/);
+      assert.match(page.body.toString(), /(?:src|href)="\/app\.js"/);
+      assert.match(page.body.toString(), /name="robots" content="noindex,nofollow"/);
+    }
+    for (const path of ['/projects', '/projects/textbook']) {
+      const response = await get(path + '?from=bookmark');
+      assert.equal(response.status, 308);
+      assert.equal(response.headers.location, path + '/?from=bookmark');
+      assert.equal(response.body.length, 0);
+    }
+    const textbook = await get('/projects/textbook/README.md');
+    assert.equal(textbook.status, 200);
+    assert.match(textbook.headers['content-type'], /^text\/plain/);
+    assert.deepEqual(textbook.body, await readFile(new URL('../projects/textbook/README.md', import.meta.url)));
+    assert.equal((await get('/projects/textbook/', 'HEAD')).body.length, 0);
     const svg = await readFile(svgSource);
     for (const [name, size] of [['favicon.png', 192], ['apple-touch-icon.png', 180]]) {
       const image = await get(`/${name}?v=1`);
@@ -41,7 +59,9 @@ test('preview serves only public files on loopback and rejects private or encode
       assert.equal(Number(imageHead.headers['content-length']), image.body.length);
       assert.equal(imageHead.headers['content-type'], 'image/png');
     }
-    for (const path of ['/.git/config', '/DEVELOPMENT.md', '/tests/', '/../README.md', '/%2e%2e/README.md', '/%2fREADME.md', '//README.md', '/scripts/serve.mjs', '/scripts/icons.mjs', '/markdown.js', '/favicon.svg', '/favicon%2epng', '/%2e%2e/favicon.png', '/node_modules/@resvg/resvg-js/index.js']) {
+    for (const path of ['/.git/config', '/DEVELOPMENT.md', '/tests/', '/../README.md', '/%2e%2e/README.md', '/%2fREADME.md', '//README.md', '/scripts/serve.mjs', '/scripts/icons.mjs', '/markdown.js', '/favicon.svg', '/favicon%2epng', '/%2e%2e/favicon.png', '/node_modules/@resvg/resvg-js/index.js',
+      '/projects/../README.md', '/projects//textbook/', '/projects/%74extbook/', '/projects/textbook/%52EADME.md',
+      '/projects/textbook/../../README.md', '/projects/textbook/private.md', '/projects/textbook/.DS_Store']) {
       assert.equal((await get(path)).status, 404, path);
     }
     assert.equal((await get('/', 'POST')).status, 405);
@@ -54,6 +74,8 @@ test('preview renders current content without writing generated files into the s
   const template = await readFile(new URL('../index.html', import.meta.url), 'utf8');
   await writeFile(join(root, 'index.html'), template);
   await writeFile(join(root, 'README.md'), 'First version.\n');
+  await mkdir(join(root, 'projects/textbook'), {recursive: true});
+  await writeFile(join(root, 'projects/textbook/README.md'), '# Mathematics for Cyber Threat Detection\n\nTextbook · In progress.\n');
   const svg = await readFile(svgSource, 'utf8');
   await writeFile(join(root, 'favicon.svg'), svg);
   const {server, url} = await startServer({root});
@@ -64,6 +86,8 @@ test('preview renders current content without writing generated files into the s
     const second = await (await fetch(url)).text();
     assert.ok(second.includes('<p>Second version.</p>'));
     assert.ok(!second.includes('First version.'));
+    await writeFile(join(root, 'projects/textbook/README.md'), '# Mathematics for Cyber Threat Detection\n\nUpdated project description.\n');
+    assert.match(await (await fetch(url + 'projects/textbook/')).text(), /Updated project description/);
     const before = await Promise.all(['favicon.png', 'apple-touch-icon.png'].map(async name =>
       Buffer.from(await (await fetch(url + name)).arrayBuffer())));
     const revisedSvg = svg.replace('#9dc9e8', '#ffffff');
@@ -76,8 +100,39 @@ test('preview renders current content without writing generated files into the s
     }
     assert.equal(await readFile(join(root, 'index.html'), 'utf8'), template);
     assert.equal(await readFile(join(root, 'favicon.svg'), 'utf8'), revisedSvg);
-    assert.deepEqual((await readdir(root)).sort(), ['README.md', 'favicon.svg', 'index.html']);
+    assert.deepEqual((await readdir(root)).sort(), ['README.md', 'favicon.svg', 'index.html', 'projects']);
+    assert.deepEqual((await readdir(join(root, 'projects/textbook'))).sort(), ['README.md']);
   } finally { await new Promise(resolve => server.close(resolve)); }
+});
+
+test('preview rejects symlinked project sources, ancestors, and templates', async t => {
+  const source = new URL('../', import.meta.url);
+  for (const kind of ['document', 'projects', 'textbook', 'template']) {
+    const root = await mkdtemp(join(tmpdir(), 'site-project-preview-'));
+    t.after(() => rm(root, {recursive: true, force: true}));
+    await writeFile(join(root, 'README.md'), 'Home.\n');
+    if (kind === 'template') await symlink(new URL('index.html', source), join(root, 'index.html'));
+    else await writeFile(join(root, 'index.html'), await readFile(new URL('index.html', source)));
+    if (kind === 'projects') await symlink(new URL('projects/', source), join(root, 'projects'), 'dir');
+    else {
+      await mkdir(join(root, 'projects'));
+      if (kind === 'textbook') await symlink(new URL('projects/textbook/', source), join(root, 'projects/textbook'), 'dir');
+      else {
+        await mkdir(join(root, 'projects/textbook'));
+        if (kind === 'document') await symlink(new URL('projects/textbook/README.md', source), join(root, 'projects/textbook/README.md'));
+        else await writeFile(join(root, 'projects/textbook/README.md'), 'In progress.\n');
+      }
+    }
+    const {server, url} = await startServer({root});
+    try {
+      for (const path of ['', 'projects/', 'projects/textbook/']) {
+        const response = await fetch(url + path);
+        assert.equal(response.status, 404, `${kind}: ${path} cannot publish linked filesystem content`);
+        assert.equal(await response.text(), '');
+      }
+      if (kind !== 'template') assert.equal((await fetch(url + 'projects/textbook/README.md')).status, 404);
+    } finally { await new Promise(resolve => server.close(resolve)); }
+  }
 });
 
 test('preview rejects missing, invalid, and symlinked icon sources without exposing other files', async t => {

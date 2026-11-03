@@ -1,5 +1,5 @@
 import {FILES, LIMITS, Session, completions, execute} from './engine.js';
-import {parseDocumentHash, documentHash, navigationState, navigationCwd} from './routing.js';
+import {parseLocation, entryURL, navigationState, navigationCwd} from './routing.js';
 import {createSnakePlayer} from './snake.js';
 
 const $ = id => document.getElementById(id);
@@ -17,16 +17,20 @@ const terminal = document.querySelector('.terminal');
 const toolsToggle = $('tools-toggle');
 const toolbar = $('command-tools');
 const snakePlayer = createSnakePlayer(window, visible => terminal.classList.toggle('snake-active', !visible));
-// The build supplies the readable document. Retain it when output is cleared.
-const readme = output.firstElementChild.cloneNode(true);
-const rawReadme = $('readme-source').textContent;
+// Every published page carries the small document catalog, without a fetch.
+// Inert templates survive clear/navigation and are cloned only when opened.
+const views = new Map(Array.from(document.querySelectorAll('template'), template =>
+  [template.dataset.view, template.content.firstElementChild]));
+views.set(output.dataset.route || '/README.md', output.firstElementChild.cloneNode(true));
+const siteLinks = document.querySelector('.site-nav').querySelectorAll('a');
+const ownerTitle = document.querySelector('.site-name').textContent;
 const session = new Session();
 let choices = [];
 let selectedChoice = -1;
 let completionAttempted = false;
 let lastNavigation = '';
 let composing = false;
-let readmeSource;
+let documentSources;
 
 // Keep the intended passage even when a larger pane clamps its scroll offset.
 // Expected positions distinguish our asynchronous scroll events from reading.
@@ -195,15 +199,19 @@ function renderResult(parent, result) {
   } else if (result.kind === 'file') {
     const path = element('div', result.path, 'file-path');
     const link = element('a', 'Link to this document', 'document-link');
-    link.href = documentHash(result.path);
+    link.href = entryURL(result.path);
+    link.dataset.page = '';
     path.append(' · ', link);
-    parent.append(path, element('h2', result.entry.title, 'file-title'));
-    const content = readme.cloneNode(true);
+    parent.append(path);
+    const content = views.get(result.path).cloneNode(true);
+    if (content.querySelector('h1')?.textContent !== result.entry.title) {
+      parent.append(element('h2', result.entry.title, 'file-title'));
+    }
     content.removeAttribute('aria-label'); // The enclosing result already names the document.
     parent.append(content);
   } else if (result.kind === 'cat') {
-    readmeSource ??= JSON.parse(rawReadme);
-    parent.append(element('pre', readmeSource, 'file-text'));
+    documentSources ??= JSON.parse($('document-sources').textContent);
+    parent.append(element('pre', documentSources[result.path], 'file-text'));
   } else if (result.kind === 'snake') {
     const snake = element('pre', undefined, 'snake');
     snake.setAttribute('role', 'img');
@@ -258,10 +266,22 @@ function routeSignature(route, cwd) {
   return `${route.kind}:${route.path || ''}:${cwd}`;
 }
 
-function writeNavigation(method, path, hash = window.location.hash) {
+function updatePage(route) {
+  const title = route.path && route.path !== '/README.md' ? FILES[route.path]?.title : '';
+  document.title = title ? `${title} | ${ownerTitle}` : ownerTitle;
+  for (const link of siteLinks) {
+    const current = link.getAttribute('href') === '/' ? !route.path?.startsWith('/projects') : route.path?.startsWith('/projects');
+    if (current) link.setAttribute('aria-current', route.path?.startsWith('/projects/') ? 'true' : 'page');
+    else link.removeAttribute('aria-current');
+  }
+}
+
+function writeNavigation(method, path, url = window.location.pathname + window.location.search + window.location.hash) {
   try {
-    window.history[method](navigationState(path, session.cwd), '', hash || window.location.pathname + window.location.search);
-    lastNavigation = routeSignature(parseDocumentHash(window.location.hash), session.cwd);
+    window.history[method](navigationState(path, session.cwd), '', url);
+    const route = parseLocation(window.location);
+    lastNavigation = routeSignature(route, session.cwd);
+    updatePage(route);
     return true;
   } catch {
     // Restricted/overloaded history APIs must not break reading or commands.
@@ -270,7 +290,7 @@ function writeNavigation(method, path, hash = window.location.hash) {
 }
 
 function rememberCurrentCwd() {
-  const route = parseDocumentHash(window.location.hash);
+  const route = parseLocation(window.location);
   const saved = window.history.state?.terminal;
   if (saved?.path === route.path && saved.cwd === session.cwd) return true;
   return writeNavigation('replaceState', route.path);
@@ -278,10 +298,10 @@ function rememberCurrentCwd() {
 
 function rememberDocument(path) {
   rememberCurrentCwd();
-  const hash = documentHash(path);
-  return window.location.hash === hash
+  const url = entryURL(path);
+  return window.location.pathname + window.location.hash === url
     ? rememberCurrentCwd()
-    : writeNavigation('pushState', path, hash);
+    : writeNavigation('pushState', path, url);
 }
 
 function run(raw, mode = 'typed') {
@@ -409,6 +429,25 @@ input.addEventListener('keydown', event => {
 });
 // One handler owns static shortcuts, dynamic results, and fill-only recovery.
 terminal.addEventListener('click', event => {
+  const link = event.target.closest('a');
+  if (link && link.hasAttribute('data-page') && !event.defaultPrevented &&
+      event.button === 0 && !modified(event) && !link.getAttribute('target') && !link.hasAttribute('download')) {
+    const url = new URL(link.href, window.location.href);
+    const route = parseLocation(url);
+    if (url.origin === window.location.origin && route.kind !== 'invalid') {
+      // Only generated local links enter the application. Modified clicks retain
+      // normal new-tab behavior and published pages also work without scripts.
+      rememberCurrentCwd();
+      const previousCwd = session.cwd;
+      session.cwd = navigationCwd(null, route.path);
+      if (writeNavigation(url.href === window.location.href ? 'replaceState' : 'pushState', route.path, url.pathname + url.search + url.hash)) {
+        event.preventDefault();
+        lastNavigation = '';
+        navigate();
+      } else session.cwd = previousCwd;
+      return;
+    }
+  }
   const button = event.target.closest('button');
   if (!button || !terminal.contains(button)) return;
   if (button === toolsToggle) {
@@ -465,7 +504,7 @@ $('next').addEventListener('click', () => recall(1));
 $('read-output').addEventListener('click', () => screen.focus({preventScroll: true}));
 
 function navigate(initial = false) {
-  const route = parseDocumentHash(window.location.hash);
+  const route = parseLocation(window.location);
   const cwd = navigationCwd(window.history.state, route.path);
   const signature = routeSignature(route, cwd);
   if (!initial && signature === lastNavigation) return;
@@ -474,14 +513,20 @@ function navigate(initial = false) {
   lastNavigation = signature;
   session.cwd = cwd;
   updatePrompt();
+  updatePage(route);
   hideSuggestions();
   completionAttempted = false;
-  if (route.kind === 'home') {
-    if (!initial) {
-      output.replaceChildren(readme.cloneNode(true));
-    }
+  // Leave a direct visit's static content in place. Regular page links show
+  // the same standalone view; only terminal commands add transcript entries.
+  if (initial && route.kind !== 'invalid' && output.dataset.route === (route.path || '')) {
+    rememberCurrentCwd();
+    return;
+  }
+  if (route.kind === 'home' || route.kind === 'directory' ||
+      (route.kind === 'file' && (!window.location.hash || window.location.hash === '#'))) {
+    output.replaceChildren(views.get(route.path || '/README.md').cloneNode(true));
     reading.reset();
-    if (!initial) { screen.focus({preventScroll: true}); announce('README.md. Command history retained.'); }
+    if (!initial) { screen.focus({preventScroll: true}); announce(`${route.kind === 'home' ? 'README.md' : FILES[route.path].title}. Command history retained.`); }
   } else {
     if (initial) output.replaceChildren();
     const result = route.kind === 'file' ? execute(`open ${route.path}`, cwd) : {

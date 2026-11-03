@@ -19,10 +19,13 @@ test('commands and limits are explicit, bounded, and immutable', () => {
   assert.ok(Object.isFrozen(LIMITS));
 });
 
-test('the virtual filesystem contains only root and README metadata, not copied content', () => {
+test('the virtual filesystem contains only authored pages and directory metadata, not copied content', () => {
   assert.deepEqual(FILES, {
-    '/': {type: 'directory', description: 'Home'},
-    '/README.md': {type: 'file', title: 'README.md'},
+    '/': {type: 'directory', description: 'Home', url: '/'},
+    '/README.md': {type: 'file', title: 'README.md', url: '/#/README.md'},
+    '/projects': {type: 'directory', title: 'Projects', description: 'Selected work', url: '/projects/'},
+    '/projects/textbook': {type: 'directory', title: 'Textbook', description: 'Textbook · In progress', url: '/projects/textbook/'},
+    '/projects/textbook/README.md': {type: 'file', title: 'Mathematics for Cyber Threat Detection', url: '/projects/textbook/'},
   });
   assert.ok(Object.isFrozen(FILES));
   for (const entry of Object.values(FILES)) {
@@ -47,13 +50,16 @@ test('path normalization supports relative, absolute, home, and dot segments', (
   }
 });
 
-test('directory listing contains the real public README only', () => {
-  assert.deepEqual(list('/'), ['/README.md']);
+test('directory listing exposes only immediate catalog children', () => {
+  assert.deepEqual(list('/'), ['/README.md', '/projects']);
+  assert.deepEqual(list('/projects'), ['/projects/textbook']);
+  assert.deepEqual(list('/projects/textbook'), ['/projects/textbook/README.md']);
+  assert.deepEqual(list('/projects/textbook/README.md'), []);
   assert.deepEqual(list('/README.md'), []);
   assert.deepEqual(list('/missing'), []);
   const entries = list('/');
   if (!Object.isFrozen(entries)) entries.length = 0;
-  assert.deepEqual(list('/'), ['/README.md']);
+  assert.deepEqual(list('/'), ['/README.md', '/projects']);
 });
 
 test('empty text does not execute and help/clear/pwd are immediately available', () => {
@@ -63,17 +69,52 @@ test('empty text does not execute and help/clear/pwd are immediately available',
   assert.deepEqual(execute('pwd'), {cwd: '/', kind: 'text', message: '/'});
 });
 
-test('invalid or non-directory current paths reset to the only valid directory', () => {
+test('invalid or non-directory current paths reset to the home directory', () => {
   for (const cwd of ['/missing', '/README.md', '__proto__', 'constructor']) {
     assert.deepEqual(execute('pwd', cwd), {cwd: '/', kind: 'text', message: '/'});
   }
 });
 
-test('ls and open directory return only the root listing', () => {
+test('ls and open retain directory browsing semantics', () => {
   for (const command of ['ls', 'ls /', 'open', 'open /', 'open ~']) {
-    assert.deepEqual(execute(command), {cwd: '/', kind: 'list', path: '/', entries: ['/README.md']});
+    assert.deepEqual(execute(command), {cwd: '/', kind: 'list', path: '/', entries: ['/README.md', '/projects']});
   }
   assert.deepEqual(execute('ls README.md'), {cwd: '/', kind: 'list', path: '/', entries: ['/README.md']});
+  for (const command of ['ls projects', 'open /projects/']) {
+    assert.deepEqual(execute(command), {cwd: '/', kind: 'list', path: '/projects', entries: ['/projects/textbook']});
+  }
+  for (const command of ['ls textbook', 'open textbook/']) {
+    assert.deepEqual(execute(command, '/projects'), {cwd: '/projects', kind: 'list', path: '/projects/textbook', entries: ['/projects/textbook/README.md']});
+  }
+});
+
+test('textbook commands resolve independently of the homepage README and preserve cwd', () => {
+  for (const [command, kind] of [['open', 'file'], ['cat', 'cat']]) {
+    for (const [path, cwd] of [
+      ['projects/textbook/README.md', '/'], ['/projects/textbook/README.md', '/'],
+      ['textbook/README.md', '/projects'], ['README.md', '/projects/textbook'],
+      ['./README.md', '/projects/textbook'], ['~/projects/textbook/README.md', '/projects/textbook'],
+    ]) assert.deepEqual(execute(`${command} ${path}`, cwd), {
+      cwd, kind, path: '/projects/textbook/README.md', entry: FILES['/projects/textbook/README.md'],
+    });
+  }
+  assert.equal(execute('cat ../../README.md', '/projects/textbook').path, '/README.md');
+  assert.equal(execute('cat /projects/textbook').kind, 'error');
+});
+
+test('project directory changes retain history and home/dot navigation', () => {
+  const session = new Session();
+  for (const [command, cwd] of [
+    ['cd projects', '/projects'], ['cd textbook', '/projects/textbook'],
+    ['cd .', '/projects/textbook'], ['cd ..', '/projects'], ['cd /projects/textbook', '/projects/textbook'],
+  ]) assert.deepEqual(session.submit(command), {cwd, kind: 'location'});
+  assert.equal(session.submit('cat README.md').path, '/projects/textbook/README.md');
+  assert.equal(session.submit('cd README.md').kind, 'error');
+  assert.equal(session.cwd, '/projects/textbook');
+  assert.deepEqual(session.submit('pwd'), {cwd: '/projects/textbook', kind: 'text', message: '/projects/textbook'});
+  assert.equal(session.submit('clear').cwd, '/projects/textbook');
+  assert.equal(session.submit('cd').cwd, '/');
+  assert.ok(session.history.includes('cd textbook'));
 });
 
 test('open and cat return distinct actions for the same canonical document', () => {
@@ -89,11 +130,14 @@ test('open and cat return distinct actions for the same canonical document', () 
 test('generated HTML owns exact canonical source while the model returns content-independent actions', async () => {
   const {renderIndex} = await import('../scripts/update-readme.mjs');
   const html = await renderIndex();
-  const data = html.match(/<script id="readme-source" type="application\/json">([\s\S]*?)<\/script>/);
+  const data = html.match(/<script id="document-sources" type="application\/json">([\s\S]*?)<\/script>/);
   assert.ok(data, 'The build must supply inert source data.');
-  const source = JSON.parse(data[1]);
+  const documents = JSON.parse(data[1]);
+  const source = documents['/README.md'];
   assert.equal(source, README);
   assert.deepEqual(Buffer.from(source, 'utf8'), Buffer.from(README, 'utf8'));
+  const textbook = await readFile(new URL('projects/textbook/README.md', moduleURL), 'utf8');
+  assert.equal(documents['/projects/textbook/README.md'], textbook);
   assert.equal(Object.hasOwn(engineModule, 'README_SOURCE'), false);
   for (const command of ['open README.md', 'cat README.md']) {
     const result = execute(command);
@@ -215,9 +259,10 @@ test('command completions append a space only for path-accepting commands', () =
   assert.deepEqual(completions('unknown'), []);
 });
 
-test('file completion exposes only README, preserves path prefixes, and is case-sensitive', () => {
+test('file completion preserves path prefixes and is case-sensitive', () => {
   for (const command of ['open', 'cat', 'ls']) {
-    for (const [prefix, expected] of [['', 'README.md'], ['R', 'README.md'], ['/R', '/README.md'], ['~/R', '~/README.md'], ['./R', './README.md'], ['../R', '../README.md']]) {
+    assert.deepEqual(completions(`${command} `), [`${command} README.md`, `${command} projects/`]);
+    for (const [prefix, expected] of [['R', 'README.md'], ['/R', '/README.md'], ['~/R', '~/README.md'], ['./R', './README.md'], ['../R', '../README.md']]) {
       assert.deepEqual(completions(`${command} ${prefix}`), [`${command} ${expected}`]);
     }
     assert.deepEqual(completions(`${command} /README.md`), [`${command} /README.md`]);
@@ -227,9 +272,21 @@ test('file completion exposes only README, preserves path prefixes, and is case-
 });
 
 test('completion never invents directories or accepts extra arguments', () => {
-  for (const input of ['cd ', 'cd /', 'cd R', 'open /README.md/', 'cat /README.md extra', 'open /work/', 'pwd ', 'help ', 'clear ']) {
+  for (const input of ['cd R', 'open /README.md/', 'cat /README.md extra', 'open /work/', 'pwd ', 'help ', 'clear ']) {
     assert.deepEqual(completions(input), [], input);
   }
+});
+
+test('nested project completion offers directories and the canonical textbook source', () => {
+  for (const [input, cwd, expected] of [
+    ['cd ', '/', ['cd projects/']], ['cd /', '/', ['cd /projects/']],
+    ['open p', '/', ['open projects/']], ['open projects/', '/', ['open projects/textbook/']],
+    ['cd text', '/projects', ['cd textbook/']],
+    ['cat projects/textbook/R', '/', ['cat projects/textbook/README.md']],
+    ['cat R', '/projects/textbook', ['cat README.md']],
+    ['open ../t', '/projects/textbook', ['open ../textbook/']],
+    ['cd R', '/projects/textbook', []], ['open Projects/', '/', []],
+  ]) assert.deepEqual(completions(input, cwd), expected, `${input} from ${cwd}`);
 });
 
 test('unknown commands suggest only one-edit allowlisted names without running or copying arguments', () => {

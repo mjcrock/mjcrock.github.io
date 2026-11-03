@@ -198,7 +198,7 @@ export async function checkReading(browser, url, engine) {
     await page.route('**/', async route => {
       const response = await route.fetch(), opening = '<section class="initial-document" aria-label="README.md">';
       const paragraphs = Array.from({length: 24}, (_, n) => `<p data-passage="${n}">Passage ${n}. ${'Readable public writing wraps naturally as the available width changes. '.repeat(4)}</p>`).join('');
-      await route.fulfill({response, body: (await response.text()).replace(opening, opening + paragraphs)});
+      await route.fulfill({response, body: (await response.text()).replaceAll(opening, opening + paragraphs)});
     });
     await page.goto(url); await page.locator('.entry').waitFor();
     const input = page.locator('#command');

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import {readFileSync, mkdtempSync, cpSync, readdirSync, rmSync, writeFileSync, mkdirSync, symlinkSync, existsSync} from 'node:fs';
 import {tmpdir} from 'node:os';
-import {join} from 'node:path';
+import {dirname, join} from 'node:path';
 import {execFileSync} from 'node:child_process';
 import {test} from 'node:test';
 import {pathToFileURL, fileURLToPath} from 'node:url';
@@ -11,11 +11,13 @@ import {renderIcon} from '../scripts/icons.mjs';
 const root = new URL('../', import.meta.url);
 const workflow = readFileSync(new URL('.github/workflows/pages.yml', root), 'utf8');
 const generatedIcons = {'favicon.png': 192, 'apple-touch-icon.png': 180};
-const publicFiles = ['index.html', 'style.css', 'app.js', 'engine.js', 'routing.js', 'snake.js', 'README.md', ...Object.keys(generatedIcons)];
-const sourceFiles = [...publicFiles.filter(file => !file.endsWith('.png')), 'favicon.svg'];
+const documents = ['README.md', 'projects/textbook/README.md'];
+const pages = ['index.html', 'projects/index.html', 'projects/textbook/index.html'];
+const publicFiles = [...pages, 'style.css', 'app.js', 'engine.js', 'routing.js', 'snake.js', ...documents, ...Object.keys(generatedIcons)];
+const sourceFiles = [...publicFiles.filter(file => !file.endsWith('.png') && !file.endsWith('/index.html')), 'favicon.svg'];
 const assets = publicFiles.filter(file => /\.(?:css|js|png)$/.test(file));
 const read = path => readFileSync(path, 'utf8');
-const assetPaths = html => [...html.matchAll(/(?:src|href)="([^"/?]+\?v=[a-f0-9]{16})"/g)]
+const assetPaths = html => [...html.matchAll(/(?:src|href)="(\/?[^"/?]+\?v=[a-f0-9]{16})"/g)]
   .map(match => match[1]).sort();
 
 function fixture(t) {
@@ -23,6 +25,7 @@ function fixture(t) {
   t.after(() => rmSync(directory, {recursive: true, force: true}));
   mkdirSync(join(directory, 'scripts'));
   for (const file of [...sourceFiles, 'markdown.js', 'scripts/update-readme.mjs', 'scripts/build.mjs', 'scripts/icons.mjs', 'package.json', 'package-lock.json']) {
+    mkdirSync(dirname(join(directory, file)), {recursive: true});
     cpSync(new URL(file, root), join(directory, file));
   }
   // Reuse installed build tooling without a second install or copying native binaries.
@@ -60,7 +63,7 @@ test('deployment generates HTML without changing source and stages only public f
   const project = fixture(t);
   const before = new Map(sourceFiles.map(file => [file, readFileSync(new URL(file, project))]));
   assert.match(before.get('index.html').toString(), /<!-- BEGIN GENERATED README -->\r?\n\s*<!-- END GENERATED README -->/);
-  assert.doesNotMatch(before.get('index.html').toString(), /id="output"|id="readme-source"/);
+  assert.doesNotMatch(before.get('index.html').toString(), /id="output"|id="document-sources"/);
   for (const file of ['.DS_Store', '._README.md', 'DEVELOPMENT.md']) {
     writeFileSync(new URL(file, project), 'Private local metadata: never publish.');
   }
@@ -74,7 +77,19 @@ test('deployment generates HTML without changing source and stages only public f
   assert.equal(paths.length, assets.length);
   const version = paths[0].slice(paths[0].indexOf('?'));
   assert.deepEqual(paths, assets.map(file => file + version).sort());
-  assert.deepEqual(readdirSync(output, {recursive: true}).sort(), [...publicFiles, '.nojekyll'].sort());
+  assert.deepEqual(readdirSync(output, {recursive: true}).sort(), [...publicFiles, 'projects', 'projects/textbook', '.nojekyll'].sort());
+  for (const page of pages.slice(1)) {
+    const document = read(new URL(page, output));
+    assert.deepEqual(assetPaths(document), paths.map(path => '/' + path), `${page} references the same root assets and version`);
+    assert.match(document, /name="robots" content="noindex,nofollow"/);
+    assert.match(document, /<a[^>]+href="\/"/);
+    for (const path of assetPaths(document)) {
+      const resolved = new URL(path, 'https://example.test/' + page);
+      assert.ok(existsSync(new URL(resolved.pathname.slice(1), output)), `${page}: ${path} resolves to a staged asset`);
+    }
+  }
+  assert.match(read(new URL('projects/index.html', output)), /href="\/projects\/textbook\/"/);
+  assert.match(read(new URL('projects/textbook/index.html', output)), /<title>Mathematics for Cyber Threat Detection/);
   for (const file of assets) {
     const published = new URL(file, output);
     if (file.endsWith('.png')) {
@@ -97,10 +112,12 @@ test('deployment generates HTML without changing source and stages only public f
         read(new URL(specifier.split('?')[0], project)));
     }
   }
-  const raw = generated.match(/<script id="readme-source" type="application\/json">([\s\S]*?)<\/script>/)[1];
+  const raw = generated.match(/<script id="document-sources" type="application\/json">([\s\S]*?)<\/script>/)[1];
   assert.match(generated, /<section class="initial-document" aria-label="README\.md">/);
-  assert.equal(JSON.parse(raw), before.get('README.md').toString());
-  assert.deepEqual(readFileSync(new URL('README.md', output)), before.get('README.md'));
+  for (const document of documents) {
+    assert.equal(JSON.parse(raw)['/' + document], before.get(document).toString());
+    assert.deepEqual(readFileSync(new URL(document, output)), before.get(document));
+  }
   assert.deepEqual(sourceFiles.map(file => readFileSync(new URL(file, project))), [...before.values()]);
 });
 
@@ -126,6 +143,10 @@ test('asset URLs are deterministic, change with any runtime asset, and ignore RE
   const contentOnly = await build();
   assert.notEqual(contentOnly, initial);
   assert.deepEqual(assetPaths(contentOnly), assetPaths(initial));
+  writeFileSync(new URL('projects/textbook/README.md', project), '# A revised textbook title\n\nIn progress.\n');
+  const textbookOnly = await build();
+  assert.match(textbookOnly, /A revised textbook title/);
+  assert.deepEqual(assetPaths(textbookOnly), assetPaths(initial), 'Authored textbook edits do not invalidate unchanged runtime assets');
 });
 
 test('build refuses an existing output directory without overwriting its files', async t => {

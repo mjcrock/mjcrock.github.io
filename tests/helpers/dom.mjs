@@ -8,10 +8,12 @@ import {renderIndex} from '../../scripts/update-readme.mjs';
  * It models the APIs the app uses and counts writes/reads. Real rendering,
  * focus defaults, accessibility trees, CSP, and mobile keyboards need browser QA.
  */
-export async function createApp({root = new URL('../../', import.meta.url), width = 1000, height = 800, fontSize = 16, coarsePointer = false, viewport = true, hash = '', state = null, reducedMotion = false} = {}) {
+export async function createApp({root = new URL('../../', import.meta.url), width = 1000, height = 800, fontSize = 16, coarsePointer = false, viewport = true, pathname = '/', hash = '', state = null, reducedMotion = false} = {}) {
   if (typeof root === 'string') root = pathToFileURL(root.endsWith('/') ? root : `${root}/`);
   const source = await readFile(new URL('app.js', root), 'utf8');
-  const markup = await renderIndex(root);
+  const markup = await renderIndex(root, pathname);
+  const entities = {'&amp;': '&', '&lt;': '<', '&gt;': '>', '&quot;': '"', '&#39;': "'"};
+  const decode = text => text.replace(/&(?:amp|lt|gt|quot|#39);/g, entity => entities[entity]);
   const staticTags = [...markup.matchAll(/<[^>]+>/gu)].map(match => match[0]);
   const importLine = /^import \{([^}]+)\} from ['"]\.\/([\w-]+)\.js['"];\s*/gmu;
   const modules = {};
@@ -115,6 +117,7 @@ export async function createApp({root = new URL('../../', import.meta.url), widt
       clone.attributes = new Map(this.attributes);
       clone.dataset = {...this.dataset};
       if (deep) clone.append(...this.childNodes.map(node => node.cloneNode(true)));
+      if (this.content) clone.content = this.content.cloneNode(deep);
       return clone;
     }
     remove() {
@@ -127,6 +130,8 @@ export async function createApp({root = new URL('../../', import.meta.url), widt
       return false;
     }
     matches(selector) {
+      const compound = selector.match(/^([a-z]+)(\[[^\]]+\])$/iu);
+      if (compound) return this.matches(compound[1]) && this.matches(compound[2]);
       if (selector.startsWith('.')) return this.className.split(/\s+/u).includes(selector.slice(1));
       if (selector.startsWith('#')) return this.id === selector.slice(1);
       const attribute = selector.match(/^\[([\w-]+)(?:=['"]?([^'"]+)['"]?)?\]$/u);
@@ -150,12 +155,17 @@ export async function createApp({root = new URL('../../', import.meta.url), widt
       if (name === 'tabindex') this.tabIndex = Number(value);
       if (name === 'class') this.className = String(value);
       if (name === 'href') this.href = String(value);
+      if (name.startsWith('data-')) this.dataset[name.slice(5).replace(/-([a-z])/g, (_, letter) => letter.toUpperCase())] = String(value);
     }
     getAttribute(name) {
       if (name.startsWith('data-')) return this.dataset[name.slice(5).replace(/-([a-z])/g, (_, letter) => letter.toUpperCase())] ?? null;
       return this.attributes.get(name) ?? null;
     }
-    removeAttribute(name) { this.attributes.delete(name); }
+    hasAttribute(name) { return this.getAttribute(name) !== null; }
+    removeAttribute(name) {
+      this.attributes.delete(name);
+      if (name.startsWith('data-')) delete this.dataset[name.slice(5).replace(/-([a-z])/g, (_, letter) => letter.toUpperCase())];
+    }
     addEventListener(type, callback) {
       metrics.listeners++;
       const callbacks = this.listeners.get(type) ?? [];
@@ -172,7 +182,7 @@ export async function createApp({root = new URL('../../', import.meta.url), widt
   let selectedText = '';
   const selection = {get isCollapsed() { return selectedText.length === 0; }, toString: () => selectedText};
   const document = Object.assign(new Node('document'), {
-    title: 'guest / terminal study',
+    title: decode(markup.match(/<title>([^<]+)<\/title>/u)?.[1] ?? ''),
     getSelection: () => selection,
     createElement: tag => new Node(tag),
     createTextNode: text => new Node('#text', text),
@@ -205,29 +215,31 @@ export async function createApp({root = new URL('../../', import.meta.url), widt
     }
   }
   const screen = make('div', 'screen', terminal, 'screen');
-  const output = make('div', 'output', screen);
-  // Parse only the generator's escaped text/p/h1-h3/a subset, independently of
-  // its Markdown parser. Actual HTML parsing and layout stay in browser checks.
-  const initial = markup.match(/<section class="initial-document" aria-label="README.md">([\s\S]*?)<\/section>/u);
-  if (initial) {
-    const root = make('section', '', output, 'initial-document');
-    root.setAttribute('aria-label', 'README.md');
-    const stack = [root];
-    const entities = {'&amp;': '&', '&lt;': '<', '&gt;': '>', '&quot;': '"', '&#39;': "'"};
-    const decode = text => text.replace(/&(?:amp|lt|gt|quot|#39);/g, entity => entities[entity]);
-    for (const token of initial[1].match(/<[^>]+>|[^<]+/g) ?? []) {
+  // Parse only the generator's escaped static subset, independently of its
+  // Markdown parser. Templates have inert content, not document descendants.
+  const parseStatic = html => {
+    const stack = [screen];
+    for (const token of html.match(/<[^>]+>|[^<]+/g) ?? []) {
+      if (token.startsWith('<!--')) continue;
       if (token.startsWith('</')) stack.pop();
       else if (token.startsWith('<')) {
-        const tag = /^<(p|h[1-3]|a)\b/u.exec(token)?.[1];
+        const tag = /^<(p|h[1-3]|a|section|div|template|nav|span|ul|li)\b/u.exec(token)?.[1];
         if (!tag) throw new Error(`Unexpected generated element: ${token}`);
         const node = new Node(tag);
-        for (const [, name, value] of token.matchAll(/([\w-]+)="([^"]*)"/g)) node.setAttribute(name, decode(value));
+        for (const [, name, value] of token.matchAll(/\s([\w-]+)(?:="([^"]*)")?/g)) node.setAttribute(name, decode(value ?? ''));
         stack.at(-1).append(node);
-        stack.push(node);
+        if (tag === 'template') node.content = new Node('fragment');
+        stack.push(node.content ?? node);
       } else stack.at(-1).append(decode(token));
     }
-    make('script', 'readme-source', screen).textContent = markup.match(/<script id="readme-source" type="application\/json">([\s\S]*?)<\/script>/u)[1];
-  }
+  };
+  const navigation = markup.match(/<nav class="site-nav"[\s\S]*?<\/nav>/u)?.[0];
+  if (navigation) parseStatic(navigation);
+  const region = markup.match(/<!-- BEGIN GENERATED README -->([\s\S]*?)<!-- END GENERATED README -->/u)?.[1] ?? '';
+  const dataPattern = /<script id="([\w-]+)" type="application\/json">([\s\S]*?)<\/script>/gu;
+  parseStatic(region.replace(dataPattern, ''));
+  for (const [, id, source] of region.matchAll(dataPattern)) make('script', id, screen).textContent = source;
+  const output = screen.querySelector('#output');
   const announcement = make('div', 'announcement', terminal);
   const entry = make('section', '', terminal, 'entry');
   const form = make('form', 'command-form', entry);
@@ -290,7 +302,7 @@ export async function createApp({root = new URL('../../', import.meta.url), widt
   window.clearTimeout = id => timers.delete(id);
   if (viewport) window.visualViewport = visualViewport;
   window.getSelection = () => selection;
-  let currentURL = new URL(`https://terminal.test/${hash}`);
+  let currentURL = new URL(pathname + hash, 'https://terminal.test/');
   const entries = [{url: currentURL.href, state: structuredClone(state)}];
   let historyIndex = 0;
   const location = {
@@ -346,7 +358,7 @@ export async function createApp({root = new URL('../../', import.meta.url), widt
   window.location = location;
   window.history = history;
   const globals = {
-    document, window, location, history, visualViewport, innerWidth: width, innerHeight: height, console, __modules: modules,
+    document, window, location, history, visualViewport, innerWidth: width, innerHeight: height, console, URL, __modules: modules,
     getComputedStyle: node => ({fontSize: node === document.documentElement ? `${fontSize}px` : ''}),
     requestAnimationFrame(callback) {
       const id = ++nextFrame;
@@ -357,6 +369,7 @@ export async function createApp({root = new URL('../../', import.meta.url), widt
     cancelAnimationFrame: id => frames.delete(id),
   };
   // Only replace module linkage; execute the actual unmodified app body.
+  const initialOutput = output.firstElementChild;
   const executable = source.replace(importLine, (_, names, name) => `const {${names}} = __modules.${name};\n`);
   runInNewContext(executable, globals, {filename: new URL('app.js', root).pathname});
 
@@ -368,7 +381,7 @@ export async function createApp({root = new URL('../../', import.meta.url), widt
     return event;
   }
   return {
-    document, terminal, screen, output, announcement, form, input, prompt, suggestions, completionPanel, completionStatus, runButton, toolsToggle, toolbar, shortcuts, metrics, globals, location, history, window,
+    document, terminal, screen, output, initialOutput, announcement, form, input, prompt, suggestions, completionPanel, completionStatus, runButton, toolsToggle, toolbar, shortcuts, metrics, globals, location, history, window,
     navigateHash,
     selectText(value) { selectedText = value; },
     dispatch,

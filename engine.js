@@ -3,8 +3,11 @@
 export const LIMITS = Object.freeze({input: 500, history: 50, output: 40});
 export const COMMANDS = Object.freeze(['help', 'ls', 'open', 'cat', 'cd', 'pwd', 'clear', 'history']);
 export const FILES = Object.freeze({
-  '/': Object.freeze({type: 'directory', description: 'Home'}),
-  '/README.md': Object.freeze({type: 'file', title: 'README.md'})
+  '/': Object.freeze({type: 'directory', description: 'Home', url: '/'}),
+  '/README.md': Object.freeze({type: 'file', title: 'README.md', url: '/#/README.md'}),
+  '/projects': Object.freeze({type: 'directory', title: 'Projects', description: 'Selected work', url: '/projects/'}),
+  '/projects/textbook': Object.freeze({type: 'directory', title: 'Textbook', description: 'Textbook · In progress', url: '/projects/textbook/'}),
+  '/projects/textbook/README.md': Object.freeze({type: 'file', title: 'Mathematics for Cyber Threat Detection', url: '/projects/textbook/'}),
 });
 
 const PATH_COMMANDS = Object.freeze(['ls', 'open', 'cat', 'cd']);

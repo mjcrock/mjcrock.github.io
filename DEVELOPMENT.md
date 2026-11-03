@@ -1,20 +1,25 @@
 # Development
 
 The site is a static terminal interface with no browser runtime dependencies.
-The repository-root `README.md` is the **single authored public Markdown document**, not this guide.
-The virtual root lists only that real file; no empty categories are invented.
+The root `README.md` supplies the homepage, and `projects/textbook/README.md`
+supplies the separate textbook page.
 
 ## Editing public content
 
-Edit `README.md`, commit, and push to `main`. The GitHub Pages workflow validates
-and tests the source, generates `_site/index.html`, and deploys the public files.
-The checked-in `index.html` is a template. Keep its marked README region empty:
-the build supplies the readable HTML and exact source data without changing
-tracked files. The title, identity metadata, and `noindex` setting are authored
-configuration in the template.
+Edit `projects/textbook/README.md` to update *Mathematics for Cyber Threat
+Detection* at `/projects/textbook/`. When the textbook is available, add a
+Markdown link labeled “Read the textbook” with its absolute HTTPS URL to that
+file. Visitors reach the page through the Projects link and the index at
+`/projects/`. The public catalog in `engine.js` supplies the directory entries
+and listing labels.
 
-The site needs no runtime packages or content fetch. The README and its links
-work without JavaScript. Command controls appear once their handlers are ready.
+The Pages workflow validates the source, tests it, and builds all three pages in
+`_site/` when changes reach `main`. Keep the marked region in the checked-in
+`index.html` template empty. The build fills each page with its own readable HTML,
+title and description. All pages use the template's CSP and `noindex,nofollow`.
+
+The public pages and navigation links work without JavaScript. Command controls
+appear once their handlers are ready.
 CSS establishes the mobile structure before initialization. When scripting is
 enabled, the hidden controls reserve their final space without accepting focus
 or appearing in the accessibility tree. With scripting disabled, that space is
@@ -22,14 +27,20 @@ released for reading. Short-screen startup styling follows the browser's default
 text size, matching the page's `100%` root font.
 Generation happens during deployment. Failed tests prevent deployment.
 
-`cat README.md` prints that source exactly, including its final newline.
-`open README.md` formats the same source with a deliberately small subset:
-paragraphs, level 1–3 headings, and absolute HTTPS links. No destination whitelist
-needs updating. HTTP, relative URLs, credentials and unsafe URL characters are
+`ls /projects` lists the textbook directory. After `cd /projects/textbook`,
+`ls` lists its `README.md`, `open README.md` displays it, and `cat README.md`
+prints its exact source. Path completion uses the same directory entries.
+A direct visit starts the terminal in the page's directory. Internal navigation
+keeps the current draft and command history, and Back and Forward restore the
+working directory saved for each page.
+
+Both documents support paragraphs, level 1–3 headings, and absolute HTTPS links.
+HTTP, relative URLs, credentials and unsafe URL characters are
 left as literal text. Percent-encode parentheses in link destinations as `%28`
 and `%29`; nested Markdown syntax is deliberately unsupported. Links are navigated only when clicked; nothing is fetched. Unsupported
 syntax and raw HTML remain literal text. No generic Markdown framework is used.
-The generator accepts valid UTF-8 up to 64 KiB and preserves BOM and line endings.
+Each Markdown file must contain valid UTF-8 and fit within 64 KiB. The generator
+preserves BOM and line endings.
 Formatted text follows normal HTML parsing, including replacement of NUL with
 U+FFFD. The original source used by `cat` remains exact.
 
@@ -44,9 +55,9 @@ npm ci --include=dev --ignore-scripts --no-audit --no-fund
 node scripts/serve.mjs
 ```
 
-Open `http://localhost:8000`. Reload after README or SVG edits. The preview renders
-the page and requested icons in memory and creates no build files. HTTP is
-required for JavaScript modules. Run the checks with:
+Open `http://localhost:8000` or `http://localhost:8000/projects/textbook/`. Reload
+after Markdown or SVG edits. The preview renders pages and requested icons in
+memory. HTTP is required for JavaScript modules. Run the checks with:
 
 ```sh
 node scripts/update-readme.mjs --check
@@ -58,8 +69,8 @@ node --check markdown.js
 node --test tests/*.test.mjs
 ```
 
-`--check` validates the README and empty template without writing files. Running
-`node scripts/update-readme.mjs` without arguments prints the generated HTML to
+`--check` validates both documents and the empty template without writing files.
+Running `node scripts/update-readme.mjs` without arguments prints the homepage HTML to
 standard output. Tests render in memory or use temporary directories outside
 the repository.
 
@@ -84,7 +95,7 @@ screen-reader or phone verification.
 - `routing.js`: bounded, allowlisted document links and browser state.
 - `snake.js`: compact ASCII frames and the one-shot animation player.
 - `markdown.js`: build-only safe subset producing text/link data.
-- `README.md`: canonical authored Markdown, also directly readable as a file.
+- `README.md` and `projects/textbook/README.md` supply the authored documents.
 - `scripts/update-readme.mjs`: build-only HTML renderer and source validation.
 - `scripts/build.mjs`: deployment staging with content-versioned asset URLs.
 - `scripts/serve.mjs`: local preview server shared by the browser checks.
@@ -92,23 +103,22 @@ screen-reader or phone verification.
 - `scripts/icons.mjs`: build/preview renderer for the 192px favicon and 180px Apple icon.
 - `package.json` and `package-lock.json`: pinned build tooling, never deployed.
 
-The page renders from six runtime assets: HTML, CSS and four JavaScript modules.
+Each page uses its own HTML, a shared stylesheet, and four shared JavaScript modules.
 The browser can also request the generated PNG icons for tabs or saved pages.
-It does not request README.md to render content. The CSP disallows connections,
+The CSP disallows connections,
 inline scripts, objects, frames, workers, bases and form actions. Module preloads
 let browsers discover the imported modules alongside the entry script.
-The application retains one detached copy of the generated README for subsequent
-views. Each view has independent DOM nodes. The inert JSON source is decoded
-only on the first `cat` and retained until reload. Publishing content replaces
-the generated HTML. No Markdown parser runs in the browser.
+Each HTML page contains the three formatted views once. Its own view is visible,
+and inert templates hold the others. The application reuses these views for
+navigation and command output, including after `clear`. An inert JSON map holds
+both Markdown sources and is decoded on the first `cat`. Reading and navigation
+need no content fetch or client-side Markdown parser.
 
-Keeping rendered content and exact source in one response avoids a request when
-`cat` runs. It duplicates some content bytes, which matters for long READMEs on
-uncompressed or gzip-only hosting. Keep this front door brief. Future articles
-should have their own pages rather than accumulating in the homepage payload.
+Including rendered content and exact source increases each page's size. Keep
+these landing documents brief and link to larger publications from their pages.
 
-No raw commands are saved to URLs or browser state. Only the fixed document path
-and validated root context are used for navigation. Typed history stays in
+No raw commands are saved to URLs or browser state. Navigation records the public
+path and validated working directory. Typed history stays in
 memory. Input is capped at 500 characters, history at 50 commands and output at
 40 blocks. The command subset has no flags, pipes, redirection, globbing or
 multi-file cat. No command can access a real shell or arbitrary local file.
@@ -260,16 +270,15 @@ browser icon may still need to refresh after deployment.
 
 ## Content direction
 
-Keep `README.md` as the introduction, identity links, and selected work. Add real
-content under `writing/` and `projects/` when ready. Generate normal HTML document
-URLs with direct links for those sections, keeping the terminal as another way
-to browse. Do not use command fragments as the only public article URLs.
+Keep the introduction and identity links in the root `README.md`. The Projects
+index links to the textbook's public page. Future writing and selected work can
+follow the same pattern of a directly accessible page and a terminal entry.
 
 A contact link belongs with the README identity links. A public, current CV or
 résumé can sit beside it, preferably with a readable HTML version and optional
 PDF download. No contact form or empty sections are needed. Keep `noindex,nofollow`
-until publication is ready. Then add per-page titles, descriptions, canonical
-URLs, and a sitemap alongside the real pages.
+until publication is ready. Then review the per-page titles and descriptions,
+add canonical URLs, and publish a sitemap.
 
 ## GitHub Pages deployment
 
@@ -283,16 +292,17 @@ Only pushes to `main` or manual runs on `main` deploy. The workflow uses pinned
 official actions, Node 24, read-only source access in the build, and Pages/OIDC
 permissions only in the deployment job. Before validation it runs
 `npm ci --include=dev --ignore-scripts --no-audit --no-fund` to install the locked
-build tooling without lifecycle scripts. It publishes exactly nine public files
-plus `.nojekyll`, not tests, scripts, this guide, hidden files, or the whole repo.
+build tooling without lifecycle scripts. Only generated pages, authored public
+documents, shared runtime assets, icons, and `.nojekyll` are staged.
 For a future custom domain, configure it in Pages settings separately; this
 workflow targets the existing GitHub-provided domain.
 
 The workflow runs `node scripts/build.mjs` to create a new `_site/` directory.
-It renders `index.html`, copies `README.md`, generates both PNG icons, and adds
-`.nojekyll`. CSS, all four JavaScript modules, and the generated PNGs get a shared
-content-hash query string in the generated HTML and module imports, including
-nested imports. Changing any runtime asset
+It renders an `index.html` for `/`, `/projects/`, and `/projects/textbook/`,
+copies both Markdown sources at their catalog paths, and generates both PNG icons.
+The nested pages reference the shared root assets. CSS, all four JavaScript
+modules, and the generated PNGs get a shared content-hash query string in the
+generated HTML and module imports, including nested imports. Changing any runtime asset
 or the icon artwork produces fresh URLs, avoiding reuse of cached code, styles,
 or icons when the updated page loads. Filenames stay stable so older cached HTML can still resolve its
 asset URLs after later deployments. Versioning adds no browser code.
@@ -306,5 +316,5 @@ leave source files unchanged.
 Keep `.DS_Store`, `._*` and `__MACOSX/` out of Git. `noindex,nofollow` is not access
 control. GitHub Pages cannot set arbitrary response headers from these files;
 header-only protections such as CSP `frame-ancestors` need suitable hosting.
-The generator reads at most 65,537 README bytes before enforcing the 64 KiB
+The generator reads at most 65,537 bytes per Markdown file before enforcing the 64 KiB
 limit, so rejected oversized authored files cannot require a full-file buffer.

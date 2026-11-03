@@ -59,16 +59,16 @@ export async function checkAlignment(browser, url, engine) {
         // WebKit rounds glyph bounds while the native control retains fractional layout coordinates.
         close(field.x, echoedCommand, label + ' active and echoed command', 1);
       } else close(field.x, rail, label + ' mobile input');
-      assert.equal(await page.locator('.listing-row').textContent(), 'README.md', 'An identical title does not repeat the filename');
-      await page.locator('.listing-row').evaluate(row => {
+      assert.equal(await page.locator('.listing-row').first().textContent(), 'README.md', 'An identical title does not repeat the filename');
+      await page.locator('.listing-row').first().evaluate(row => {
         const description = document.createElement('span');
         description.textContent = 'A distinct description';
         row.append(description);
       });
-      const filename = await textGeometry(page.locator('.listing-row button'));
-      const description = await textGeometry(page.locator('.listing-row span'));
+      const filename = await textGeometry(page.locator('.listing-row button').first());
+      const description = await textGeometry(page.locator('.listing-row span').first());
       close(filename.x, rail, label + ' filename'); close(filename.y, description.y, label + ' listing baseline');
-      await page.locator('.listing-row').evaluate(row => {
+      await page.locator('.listing-row').first().evaluate(row => {
         const wrapped = row.cloneNode(true);
         wrapped.querySelector('button').textContent = 'a-long-filename-that-wraps-across-several-lines.md';
         wrapped.querySelector('span').textContent = 'A long description that wraps beside its filename. '.repeat(8);

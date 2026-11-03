@@ -39,7 +39,7 @@ test('unused embedding and background execution capabilities are blocked', () =>
 });
 
 test('the readable README is present before JavaScript and controls wait for initialization', () => {
-  const document = html.match(/<div id="output"><section class="initial-document"([^>]*)>([\s\S]*?)<\/section><\/div>/);
+  const document = html.match(/<div id="output"[^>]*><section class="initial-document"([^>]*)>([\s\S]*?)<\/section><\/div>/);
   assert.ok(document);
   assert.match(document[1], /aria-label="README\.md"/);
   assert.doesNotMatch(document[1], /\bhidden\b/);
