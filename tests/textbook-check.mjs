@@ -5,6 +5,7 @@ const title = 'Mathematics for Cyber Threat Detection';
 const bookPath = '/projects/textbook/';
 const frames = page => page.evaluate(() => new Promise(done => requestAnimationFrame(() => requestAnimationFrame(done))));
 const path = page => new URL(page.url()).pathname;
+const routeLink = (page, name) => page.getByRole('navigation', {name: 'Site'}).getByRole('link', {name, exact: true});
 
 export async function checkTextbook(browser, url, engine) {
   const rootSource = await readFile(new URL('../README.md', import.meta.url), 'utf8');
@@ -29,6 +30,8 @@ export async function checkTextbook(browser, url, engine) {
     await initial.waitForFunction(() => document.styleSheets.length > 0);
     await frames(initial);
     assert.equal(await heading.textContent(), title);
+    assert.equal(await initial.locator('h1').count(), 1);
+    assert.equal(await routeLink(initial, 'All projects').getAttribute('href'), '/projects/');
     assert.equal(await initial.locator('#output .initial-document p').textContent(), 'Textbook · In progress');
     assert.equal(await initial.locator('#command').isVisible(), false);
     await heading.evaluate(node => { node.dataset.retained = 'yes'; });
@@ -58,6 +61,14 @@ export async function checkTextbook(browser, url, engine) {
     assert.deepEqual(sizes, [[192, 192], [180, 180]]);
     const source = await initial.request.get(new URL('projects/textbook/README.md', url).href);
     assert.equal(source.status(), 200); assert.equal(await source.text(), bookSource);
+    await initial.goto(new URL(bookPath + '#screen', url).href); await initial.reload();
+    await initial.locator('.entry').waitFor();
+    assert.equal(await initial.locator('#output h1').textContent(), title, 'A native section fragment keeps the direct textbook view');
+    assert.equal(await initial.locator('.echo,.error').count(), 0);
+    await initial.goto(url + '#%2Fprojects%2Ftextbook%2FREADME.md'); await initial.locator('.entry').waitFor();
+    assert.equal(await initial.locator('#output').getByRole('heading', {name: title, exact: true}).count(), 1,
+      'An encoded legacy document fragment still opens the book');
+    assert.equal(await initial.locator('.error').count(), 0);
   } finally { release(); await initial.close(); }
 
   const plain = await createPage({viewport: {width: 390, height: 780}, hasTouch: true, javaScriptEnabled: false});
@@ -66,10 +77,12 @@ export async function checkTextbook(browser, url, engine) {
     assert.ok((await plain.locator('#output .initial-document').textContent()).trim());
     assert.ok(!(await plain.locator('#output').textContent()).includes(title),
       'The authored homepage remains separate from the textbook');
-    await plain.getByRole('navigation', {name: 'Site'}).getByRole('link', {name: 'Projects', exact: true}).click();
+    assert.equal(await plain.locator('.page-nav a').count(), 1);
+    assert.equal(await plain.locator('h1.site-name').count(), 1);
+    await routeLink(plain, 'Browse projects').click();
     assert.equal(path(plain), '/projects/');
     assert.equal(await plain.title(), 'Projects | Michael J. Crockett');
-    assert.equal(await plain.locator('#output h2').textContent(), 'Projects');
+    assert.equal(await plain.locator('h1').textContent(), 'Projects');
     const project = plain.locator('#output').getByRole('link', {name: title, exact: true});
     assert.equal(await project.getAttribute('href'), bookPath);
     await project.click();
@@ -78,7 +91,9 @@ export async function checkTextbook(browser, url, engine) {
     assert.equal(await plain.locator('#output p').count(), 1);
     assert.equal(await plain.locator('#command').isVisible(), false);
     assert.equal(await plain.getByRole('button', {name: 'Run command', exact: true}).count(), 0);
-    await plain.getByRole('navigation', {name: 'Site'}).getByRole('link', {name: 'Home', exact: true}).click();
+    await routeLink(plain, 'All projects').click();
+    assert.equal(path(plain), '/projects/');
+    await routeLink(plain, 'Home').click();
     assert.equal(path(plain), '/');
     assert.equal(await plain.locator('#output h1').count(), 0);
     assert.ok(await plain.locator('#output a[href="https://github.com/mjcrock"]').count());
@@ -89,7 +104,7 @@ export async function checkTextbook(browser, url, engine) {
     await page.goto(url); await page.locator('.entry').waitFor();
     const input = page.locator('#command');
     const run = async command => { await input.fill(command); await input.press('Enter'); await frames(page); };
-    const nav = page.getByRole('navigation', {name: 'Site'});
+    const focusedHeading = () => page.evaluate(() => document.activeElement.matches('h1') ? document.activeElement.textContent : '');
     const checkBookPage = async () => {
       const output = page.locator('#output');
       assert.equal(await output.locator(':scope > *').count(), 1);
@@ -102,17 +117,47 @@ export async function checkTextbook(browser, url, engine) {
       if (['document', 'script', 'stylesheet', 'fetch', 'xhr'].includes(request.resourceType())) requests.push(request.url());
     });
     await input.fill('a draft across pages');
-    await nav.getByRole('link', {name: 'Projects', exact: true}).click(); await frames(page);
+    const browse = routeLink(page, 'Browse projects');
+    // Catch the event after the site's delegated handler and prevent opening an
+    // actual second tab. The browser receives a modified click uncanceled.
+    const intercepted = await browse.evaluate(link => {
+      let intercepted;
+      document.addEventListener('click', event => { intercepted = event.defaultPrevented; event.preventDefault(); }, {once: true});
+      link.dispatchEvent(new MouseEvent('click', {bubbles: true, cancelable: true, metaKey: true}));
+      return intercepted;
+    });
+    assert.equal(intercepted, false); assert.equal(path(page), '/');
+    await browse.click(); await frames(page);
     assert.equal(path(page), '/projects/');
+    assert.equal(await focusedHeading(), 'Projects');
     assert.equal(await input.inputValue(), 'a draft across pages');
     assert.equal(await page.locator('#prompt').textContent(), 'guest:~/projects $');
     await page.locator('#output').getByRole('link', {name: title, exact: true}).click(); await frames(page);
     assert.equal(path(page), bookPath); assert.equal(new URL(page.url()).hash, '');
+    assert.equal(await focusedHeading(), title);
     assert.equal(await page.locator('#prompt').textContent(), 'guest:~/projects/textbook $');
     assert.equal(await input.inputValue(), 'a draft across pages');
     await checkBookPage();
+
+    const header = await page.locator('.bar').boundingBox();
+    const ownerStyle = () => page.locator('.site-name').evaluate(node => {
+      const style = getComputedStyle(node);
+      return {font: style.fontSize, color: style.color, weight: style.fontWeight};
+    });
+    const quietOwner = await ownerStyle();
+    await input.evaluate(field => {
+      for (let i = 0; i < 40; i++) {
+        field.value = 'pwd';
+        field.form.dispatchEvent(new Event('submit', {bubbles: true, cancelable: true}));
+      }
+    });
+    assert.equal(await page.locator('h1.site-name').count(), 1, 'The masthead supplies a primary heading after pruning the initial view');
+    assert.deepEqual(await page.locator('.bar').boundingBox(), header, 'Pruning output cannot resize the masthead');
+    assert.deepEqual(await ownerStyle(), quietOwner, 'Pruning output retains the quiet owner typography');
+    await input.fill('a draft across pages');
     await page.goBack(); await frames(page);
     assert.equal(path(page), '/projects/');
+    assert.equal(await focusedHeading(), 'Projects');
     assert.equal(await page.locator('#prompt').textContent(), 'guest:~/projects $');
     await page.goForward(); await frames(page);
     assert.equal(path(page), bookPath);
@@ -133,12 +178,19 @@ export async function checkTextbook(browser, url, engine) {
     assert.equal(await page.locator('#output > .block').last().locator('.file-text').textContent(), rootSource);
     await run('clear');
     assert.equal(await page.locator('#output').evaluate(node => node.children.length), 0);
+    assert.deepEqual(await page.locator('.bar').boundingBox(), header, 'Clearing output cannot resize the masthead');
+    assert.deepEqual(await ownerStyle(), quietOwner, 'Clearing output retains the quiet owner typography');
+    await routeLink(page, 'All projects').click(); await frames(page);
+    assert.equal(path(page), '/projects/', 'The contextual link survives clearing the transcript');
+    await page.goBack(); await frames(page);
+    assert.equal(await focusedHeading(), title);
     await run('open README.md');
-    assert.equal(await page.locator('#output > .block').last().locator('h1').textContent(), title);
-    assert.equal(await page.locator('#output > .block').last().locator('.file-title').count(), 0,
-      'The command result displays the authored title once');
-    const copyLink = page.locator('#output > .block').last().getByRole('link', {name: 'Link to this document', exact: true});
+    const result = page.locator('#output > .block').last();
+    assert.equal(await result.getByRole('heading', {name: title, level: 2, exact: true}).count(), 1);
+    assert.equal(await result.getByRole('heading').count(), 1, 'The command result displays the authored title once');
+    const copyLink = result.getByRole('link', {name: `Permalink to ${title}`, exact: true});
     assert.equal(await copyLink.getAttribute('href'), bookPath);
+    assert.equal(await copyLink.textContent(), 'Permalink');
 
     await run('cd /');
     await input.fill('open projects/te'); await input.press('Tab');
@@ -177,10 +229,9 @@ export async function checkTextbook(browser, url, engine) {
         height: node.getBoundingClientRect().height, lineHeight: parseFloat(getComputedStyle(node).lineHeight),
       }));
       assert.ok(heading.height > heading.lineHeight * 1.5, 'The long title wraps naturally');
-      for (const link of await mobile.locator('.site-nav a').all()) {
-        const box = await link.boundingBox();
-        assert.ok(box.width >= 44 && box.height >= 44, 'Page navigation keeps full-size touch targets');
-      }
+      const link = routeLink(mobile, 'All projects');
+      const box = await link.boundingBox();
+      assert.ok(box.width >= 44 && box.height >= 44, 'The contextual link retains its touch target');
       const input = mobile.locator('#command');
       await input.fill('ls'); await input.press('Enter');
       await mobile.setViewportSize({width, height: 260}); await frames(mobile);
@@ -197,6 +248,22 @@ export async function checkTextbook(browser, url, engine) {
       assert.ok(geometry.width <= width);
       const filename = await mobile.locator('#output > .block').last().locator('.listing-row button').boundingBox();
       assert.ok(filename.height >= 44, 'The nested README keeps its touch target');
+      await input.fill('help'); await input.press('Enter');
+      const measured = await link.evaluate(link => {
+        const screen = document.querySelector('#screen');
+        screen.scrollTop = 0;
+        const initialY = link.getBoundingClientRect().top;
+        screen.scrollTop = screen.scrollHeight;
+        const rect = link.getBoundingClientRect(), pane = screen.getBoundingClientRect();
+        return {distance: initialY - rect.top, scrolled: screen.scrollTop,
+          afterOutput: rect.top >= document.querySelector('#output').getBoundingClientRect().bottom - 1,
+          reachable: rect.top >= pane.top - 1 && rect.bottom <= pane.bottom + 1};
+      });
+      assert.ok(measured.scrolled > 44 && Math.abs(measured.distance - measured.scrolled) <= 1,
+        'The link scrolls with the transcript in compact mode');
+      assert.ok(measured.afterOutput && measured.reachable, 'The link can scroll fully into view below the output');
+      await link.tap(); await frames(mobile);
+      assert.equal(path(mobile), '/projects/');
     } finally { await mobile.close(); }
   }
   assert.deepEqual(errors, [], `${engine}: textbook pages have no runtime errors`);

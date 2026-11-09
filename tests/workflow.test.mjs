@@ -82,7 +82,9 @@ test('deployment generates HTML without changing source and stages only public f
     const document = read(new URL(page, output));
     assert.deepEqual(assetPaths(document), paths.map(path => '/' + path), `${page} references the same root assets and version`);
     assert.match(document, /name="robots" content="noindex,nofollow"/);
-    assert.match(document, /<a[^>]+href="\/"/);
+    const nextPage = document.match(/<a id="page-link"[^>]+href="([^"]+)"/)?.[1];
+    assert.ok(nextPage, `${page} offers a next destination`);
+    assert.ok(existsSync(new URL(nextPage.slice(1) + 'index.html', output)), `${page} links to a staged page`);
     for (const path of assetPaths(document)) {
       const resolved = new URL(path, 'https://example.test/' + page);
       assert.ok(existsSync(new URL(resolved.pathname.slice(1), output)), `${page}: ${path} resolves to a staged asset`);

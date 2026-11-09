@@ -16,13 +16,30 @@ export function entryURL(path) {
   return typeof path === 'string' && own(path) ? FILES[path].url : '';
 }
 
+// One related destination per page, shared by static and interactive navigation.
+export function pageLink(path) {
+  if (path === null || path === '/' || path === '/README.md') {
+    return {href: FILES['/projects'].url, label: 'Browse projects'};
+  }
+  if (typeof path === 'string' && own(path) && path.startsWith('/projects/')) {
+    return {href: FILES['/projects'].url, label: 'All projects'};
+  }
+  return {href: FILES['/'].url, label: 'Home'};
+}
+
+export function isDocumentHash(hash) {
+  return typeof hash === 'string' && /^#(?:\/|%2f)/i.test(hash);
+}
+
 export function parseLocation(location = {}) {
   if (!location || typeof location !== 'object') return {kind: 'invalid', path: null};
   const {pathname = '/', hash = ''} = location;
-  if (typeof pathname !== 'string') return {kind: 'invalid', path: null};
+  if (typeof pathname !== 'string' || typeof hash !== 'string' || (hash && !hash.startsWith('#'))) {
+    return {kind: 'invalid', path: null};
+  }
   const page = pages.get(pathname.endsWith('/index.html') ? pathname.slice(0, -10) : pathname);
   if (!page) return {kind: 'invalid', path: null};
-  if (hash !== '' && hash !== '#') return parseDocumentHash(hash);
+  if (isDocumentHash(hash)) return parseDocumentHash(hash);
   return {...page};
 }
 

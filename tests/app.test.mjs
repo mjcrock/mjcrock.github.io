@@ -160,7 +160,7 @@ test('returning to a directly loaded project directory restores an independent c
   const first = app.output.firstElementChild;
   const canonical = first.textContent;
   const projectLink = first.querySelector('a');
-  first.querySelector('h2').textContent = 'Local view mutation';
+  first.querySelector('h1').textContent = 'Local view mutation';
   app.click(projectLink);
   assertStandaloneTextbook(app);
   app.history.back();
@@ -199,50 +199,101 @@ test('cross-document Back and Forward restore each saved directory without repla
     ['cd projects/textbook', 'open README.md', 'cd /', 'open README.md', 'history']);
 });
 
-test('normal project links preserve drafts and browser history without opening the keyboard', async () => {
+test('contextual page links remain usable after clear and give each destination heading focus', async () => {
   const app = await ready();
   app.change('unfinished draft');
-  const nav = app.document.querySelector('.site-nav');
-  const projects = nav.querySelectorAll('a').find(link => link.href === '/projects/');
-  assert.ok(projects, 'Projects must be discoverable without a terminal command');
-  assert.equal(app.click(projects).defaultPrevented, true);
+  const link = app.document.getElementById('page-link');
+  assert.equal(link.textContent, 'Browse projects');
+  assert.equal(link.href, '/projects/');
+  assert.equal(app.click(link).defaultPrevented, true);
   assert.equal(app.location.pathname, '/projects/');
   assert.equal(app.prompt.textContent, 'guest:~/projects $');
+  assert.equal(link.textContent, 'Home');
+  assert.equal(link.href, '/');
+  assert.equal(app.document.activeElement, app.output.querySelector('h1'));
+  assert.equal(app.document.querySelector('.site-name').tagName, 'P');
+  assert.doesNotMatch(app.announcement.textContent, /command history/i);
   assert.equal(app.history.length, 2);
-  assert.equal(app.click(projects).defaultPrevented, true);
-  assert.equal(app.history.length, 2, 'Revisiting the current page must not require an extra Back');
   const textbook = app.output.querySelectorAll('a').find(link => link.href === '/projects/textbook/');
   assert.ok(textbook);
   assert.equal(app.click(textbook).defaultPrevented, true);
   assert.equal(app.location.pathname, '/projects/textbook/');
   assert.equal(app.prompt.textContent, 'guest:~/projects/textbook $');
   assertStandaloneTextbook(app);
+  assert.equal(link.textContent, 'All projects');
+  assert.equal(link.href, '/projects/');
+  assert.equal(app.document.activeElement, app.output.querySelector('h1'));
   assert.equal(app.input.value, 'unfinished draft');
-  assert.notEqual(app.document.activeElement, app.input);
   assert.equal(app.metrics.focusCalls.some(call => call.node === app.input), false);
   app.history.back();
   assert.equal(app.location.pathname, '/projects/');
   assert.equal(app.prompt.textContent, 'guest:~/projects $');
   assert.equal(app.input.value, 'unfinished draft');
-  app.history.back();
+  assert.equal(app.document.activeElement, app.output.querySelector('h1'));
+  app.history.forward();
+  assert.equal(app.document.activeElement, app.output.querySelector('h1'));
+  assertStandaloneTextbook(app);
+  app.submit('clear');
+  assert.equal(app.output.children.length, 0);
+  app.change('draft after clear');
+  assert.equal(link.textContent, 'All projects');
+  assert.equal(app.click(link).defaultPrevented, true);
+  assert.equal(app.location.pathname, '/projects/');
+  assert.equal(app.output.firstElementChild.querySelector('h1').textContent, 'Projects');
+  assert.equal(link.textContent, 'Home');
+  assert.equal(app.click(link).defaultPrevented, true);
   assert.equal(app.location.pathname, '/');
   assert.equal(app.prompt.textContent, 'guest:~ $');
   assert.equal(app.output.firstElementChild.textContent, renderedText);
+  assert.equal(app.document.activeElement, app.document.querySelector('.site-name'));
+  assert.equal(app.document.activeElement.tagName, 'H1');
+  assert.equal(app.input.value, 'draft after clear');
   app.submit('history');
-  assert.deepEqual(app.output.lastElementChild.querySelectorAll('button').map(node => node.textContent), ['history']);
+  assert.deepEqual(app.output.lastElementChild.querySelectorAll('button').map(node => node.textContent), ['clear', 'history']);
 });
 
-test('project link enhancement leaves modified, external, target and download navigation native', async () => {
+test('returning home on a short mobile screen focuses the visible reading pane', async () => {
+  const app = await ready({pathname: '/projects/', width: 390, height: 260});
+  app.click(app.document.getElementById('page-link'));
+  assert.equal(app.location.pathname, '/');
+  assert.equal(app.document.activeElement, app.screen);
+  assert.equal(app.metrics.focusCalls.some(call => call.node === app.input), false);
+});
+
+test('a document without a heading remains navigable and focuses the reading pane', async () => {
+  for (const empty of [false, true]) {
+    const app = await ready();
+    const template = app.document.querySelectorAll('template').find(node => node.dataset.view === textbookPath);
+    const content = template.content.firstElementChild;
+    // Both paragraph-only and empty Markdown are valid authored documents.
+    if (empty) content.replaceChildren();
+    else content.querySelector('h1').remove();
+    const expected = content.textContent;
+    app.change('retained draft');
+    app.click(app.document.getElementById('page-link'));
+    app.click(app.output.querySelector('a'));
+    assert.equal(app.location.pathname, '/projects/textbook/');
+    assert.equal(app.output.firstElementChild.textContent, expected);
+    assert.equal(app.output.querySelector('.error'), null);
+    assert.equal(app.document.activeElement, app.screen);
+    assert.equal(app.input.value, 'retained draft');
+    app.click(app.document.getElementById('page-link'));
+    assert.equal(app.location.pathname, '/projects/');
+    assert.equal(app.document.activeElement, app.output.querySelector('h1'));
+  }
+});
+
+test('project link enhancement leaves modified, fragment, external, target and download navigation native', async () => {
   for (const modification of [{ctrlKey: true}, {metaKey: true}, {shiftKey: true}, {altKey: true}, {button: 1}]) {
     const app = await ready();
-    const projects = app.document.querySelector('.site-nav').querySelectorAll('a').find(link => link.href === '/projects/');
+    const projects = app.document.getElementById('page-link');
     assert.equal(app.dispatch(projects, 'click', modification).defaultPrevented, false);
     assert.equal(app.location.pathname, '/');
     assert.equal(app.history.length, 1);
   }
-  for (const attributes of [{target: '_blank'}, {download: ''}, {href: 'https://example.com/projects/'}]) {
+  for (const attributes of [{target: '_blank'}, {download: ''}, {href: '#screen'}, {href: '/projects/#screen'}, {href: 'https://example.com/projects/'}]) {
     const app = await ready();
-    const projects = app.document.querySelector('.site-nav').querySelectorAll('a').find(link => link.href === '/projects/');
+    const projects = app.document.getElementById('page-link');
     for (const [name, value] of Object.entries(attributes)) projects.setAttribute(name, value);
     assert.equal(app.click(projects).defaultPrevented, false);
     assert.equal(app.location.pathname, '/');
@@ -258,7 +309,7 @@ test('published project links fall back to native navigation when browser histor
   const app = await ready();
   app.change('preserved draft');
   app.history.failWrites = true;
-  const projects = app.document.querySelector('.site-nav').querySelectorAll('a').find(link => link.href === '/projects/');
+  const projects = app.document.getElementById('page-link');
   const initial = app.output.firstElementChild;
   assert.equal(app.click(projects).defaultPrevented, false, 'A failed enhancement must not turn the real page link into a dead control');
   assert.equal(app.output.firstElementChild, initial);
@@ -337,10 +388,18 @@ test('dynamic listing and help controls use the same delegated command handler',
   const commands = app.output.lastElementChild.querySelectorAll('button');
   assert.ok(commands.length);
   assert.ok(commands.every(node => !/writing|sample|about|contact|work/.test(node.dataset.command)));
-  const helpButton = commands.find(node => node.dataset.command === 'cat README.md');
-  assert.ok(helpButton);
-  app.click(helpButton);
-  assert.equal(app.output.lastElementChild.querySelector('pre').textContent, readme);
+  const browse = commands.find(node => node.dataset.command === 'ls /projects');
+  const read = commands.find(node => node.dataset.command === 'open /README.md');
+  assert.ok(browse && read);
+  for (const directory of ['/projects', '/projects/textbook']) {
+    app.submit('cd ' + directory);
+    app.click(browse);
+    assert.equal(app.output.lastElementChild.querySelector('.listing-row').firstElementChild.dataset.command,
+      'open /projects/textbook', 'A help action in an older transcript keeps its target after cd');
+    app.click(read);
+    assert.equal(app.output.lastElementChild.querySelector('.initial-document').textContent, renderedText);
+    assert.equal(app.location.hash, '#/README.md');
+  }
 });
 
 test('browsing help and documents preserves an unfinished command and records browsed commands', async () => {
@@ -348,13 +407,13 @@ test('browsing help and documents preserves an unfinished command and records br
   app.change('cat RE');
   app.click(app.document.querySelector('.show-commands'));
   assert.equal(app.input.value, 'cat RE');
-  const open = app.output.lastElementChild.querySelectorAll('button').find(node => node.dataset.command === 'open README.md');
+  const open = app.output.lastElementChild.querySelectorAll('button').find(node => node.dataset.command === 'open /README.md');
   app.click(open);
   assert.equal(app.input.value, 'cat RE');
   assert.equal(app.location.hash, '#/README.md');
   assert.equal(app.document.activeElement, app.output.lastElementChild);
   app.key('ArrowUp');
-  assert.equal(app.input.value, 'open README.md');
+  assert.equal(app.input.value, 'open /README.md');
   app.key('ArrowUp');
   assert.equal(app.input.value, 'help');
   app.key('ArrowDown');
@@ -1736,7 +1795,7 @@ test('Back to the initial entry restores passive README without clearing command
   assert.equal(app.output.querySelector('.echo'), null);
   assert.ok(app.output.textContent.includes(renderedText));
   assert.equal(app.input.value, 'draft');
-  assert.equal(app.document.activeElement, app.screen);
+  assert.equal(app.document.activeElement, app.document.querySelector('.site-name'));
   app.history.forward();
   assert.equal(app.output.lastElementChild.querySelector('.file-title').textContent, 'README.md');
   app.submit('history');
@@ -1757,8 +1816,8 @@ test('fresh README links load passively without fake command echoes or command h
   assert.deepEqual(app.output.lastElementChild.querySelectorAll('button').map(node => node.textContent), ['history']);
 });
 
-test('malformed and unknown initial hashes are safely rejected without autofocus or raw echo', async () => {
-  for (const hash of ['#%', '#/writing', '#/../../etc/passwd', '#<img/src=x/onerror=alert(1)>', '#' + 'x'.repeat(501)]) {
+test('malformed and unknown legacy document links are safely rejected without autofocus or raw echo', async () => {
+  for (const hash of ['#/%', '#/writing', '#/../../etc/passwd', '#/<img/src=x/onerror=alert(1)>', '#/' + 'x'.repeat(501)]) {
     const app = await ready({hash});
     assert.equal(app.document.activeElement, app.document.body, hash);
     assert.match(app.output.textContent, /document link is not available/);
@@ -1767,6 +1826,51 @@ test('malformed and unknown initial hashes are safely rejected without autofocus
     app.change('draft');
     app.key('ArrowUp');
     assert.equal(app.input.value, 'draft');
+  }
+});
+
+test('ordinary fragments preserve the current view, terminal directory, draft and focus', async () => {
+  for (const pathname of ['/', '/projects/', '/projects/textbook/']) {
+    const app = await createApp({pathname, hash: '#screen'});
+    assert.equal(app.output.firstElementChild, app.initialOutput);
+    assert.equal(app.output.querySelector('.error'), null);
+    assert.equal(app.metrics.focusCalls.length, 0);
+    app.submit('cd /projects');
+    app.submit('pwd');
+    const lastResult = app.output.lastElementChild;
+    app.input.focus();
+    app.change('retained draft');
+    app.navigateHash('#overview');
+    assert.equal(app.output.lastElementChild, lastResult);
+    assert.equal(app.prompt.textContent, 'guest:~/projects $');
+    assert.equal(app.input.value, 'retained draft');
+    assert.equal(app.document.activeElement, app.input);
+    app.history.back();
+    assert.equal(app.output.lastElementChild, lastResult);
+    assert.equal(app.prompt.textContent, 'guest:~/projects $');
+  }
+});
+
+test('Back and Forward across ordinary fragments restore saved directories without replacing the transcript', async () => {
+  for (const pathname of ['/', '/projects/', '/projects/textbook/']) {
+    const app = await ready({pathname});
+    app.submit('cd /');
+    app.navigateHash('#screen');
+    app.submit('cd /projects');
+    const lastResult = app.output.lastElementChild;
+    app.change('retained draft');
+    app.history.back();
+    assert.equal(app.location.hash, '');
+    assert.equal(app.prompt.textContent, 'guest:~ $');
+    assert.equal(app.history.state.terminal.cwd, '/');
+    assert.equal(app.output.lastElementChild, lastResult);
+    assert.equal(app.input.value, 'retained draft');
+    app.history.forward();
+    assert.equal(app.location.hash, '#screen');
+    assert.equal(app.prompt.textContent, 'guest:~/projects $');
+    assert.equal(app.history.state.terminal.cwd, '/projects');
+    assert.equal(app.output.lastElementChild, lastResult);
+    assert.equal(app.input.value, 'retained draft');
   }
 });
 
@@ -1788,7 +1892,8 @@ test('manual hash navigation deduplicates paired events and uses only README.md'
   assert.equal(app.output.children.length, count + 1);
   assert.equal(app.output.lastElementChild.querySelector('.file-title').textContent, 'README.md');
   app.navigateHash('#clear');
-  assert.match(app.output.lastElementChild.textContent, /document link is not available/);
+  assert.equal(app.output.firstElementChild.textContent, renderedText);
+  assert.equal(app.output.querySelector('.error'), null);
   app.submit('history');
   assert.deepEqual(app.output.lastElementChild.querySelectorAll('button').map(node => node.textContent), ['cd /', 'history']);
 });
@@ -1796,7 +1901,7 @@ test('manual hash navigation deduplicates paired events and uses only README.md'
 test('repeated browser navigation remains output-bounded and adds no per-result listeners', async () => {
   const app = await ready();
   app.submit('open README.md');
-  app.navigateHash('#not-a-document');
+  app.navigateHash('#/not-a-document');
   const listeners = app.metrics.listeners;
   for (let index = 0; index < 100; index++) { app.history.back(); app.history.forward(); }
   assert.equal(app.output.children.length, 40);
@@ -1820,7 +1925,7 @@ test('history API write failure cannot prevent document rendering or further com
 test('browser navigation invalidates visible completion state without deleting its draft', async () => {
   const app = await ready();
   app.submit('open /README.md');
-  app.navigateHash('#not-a-document');
+  app.navigateHash('#/not-a-document');
   app.change('h');
   app.key('Tab');
   assert.equal(app.input.getAttribute('aria-expanded'), 'true');
@@ -2115,7 +2220,7 @@ test('README and command controls are ready synchronously without network or tim
   assert.equal(app.output.querySelector('.echo'), null);
   assert.ok(app.document.querySelectorAll('input, button').every(control => !control.disabled));
   assert.equal(app.document.querySelector('.site-name').textContent, 'Michael J. Crockett');
-  assert.equal(app.document.querySelector('.site-status').textContent, 'Site in progress');
+  assert.equal(app.document.querySelector('.site-name').tagName, 'H1');
   assert.equal(app.document.querySelector('.show-commands').textContent, 'Show commands');
   for (const api of ['fetch', 'XMLHttpRequest', 'WebSocket', 'setTimeout', 'clearTimeout']) {
     assert.equal(api in app.globals, false, `${api} is not supplied by the fixture`);
@@ -2132,12 +2237,12 @@ test('help shows commands and short examples without introductory or detailed ex
   assert.equal(app.document.activeElement, app.output.lastElementChild);
   const result = app.output.lastElementChild.querySelector('.result');
   assert.deepEqual(result.querySelectorAll('p').map(node => node.textContent), [
-    'Try cat README.md or open README.md.',
+    'Try ls /projects or open /README.md.',
   ]);
   assert.equal(result.querySelectorAll('dt').length, 8);
   assert.ok(result.querySelectorAll('dt').some(node => node.textContent === 'cat path'));
   assert.ok(result.querySelectorAll('dd').every(node => !node.textContent.includes(';')));
-  assert.deepEqual(result.querySelectorAll('button').map(node => node.dataset.command), ['cat README.md', 'open README.md']);
+  assert.deepEqual(result.querySelectorAll('button').map(node => node.dataset.command), ['ls /projects', 'open /README.md']);
   for (const removed of [
     'A small, read-only interface. Not a remote shell.',
     'Tab completes once; Tab again or Shift+Tab leaves the input. With choices open, ↑ / ↓ selects and Enter accepts without running. Escape dismisses choices and keeps your draft.',

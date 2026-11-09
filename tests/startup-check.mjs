@@ -5,7 +5,7 @@ const layout = page => page.evaluate(() => {
   const box = selector => document.querySelector(selector).getBoundingClientRect().toJSON();
   const entry = document.querySelector('.entry');
   return {frame: box('.terminal'), output: box('.screen'), entry: box('.entry'),
-    intro: box('.initial-document p'), header: box('.bar'), input: box('#command'),
+    intro: box('.initial-document p'), header: box('.bar'), input: box('#command'), link: box('#page-link'),
     hidden: entry.hidden, visibility: getComputedStyle(entry).visibility,
     rootFont: parseFloat(getComputedStyle(document.documentElement).fontSize)};
 });
@@ -43,7 +43,7 @@ export async function checkStartup(browser, url, engine) {
       await page.locator('.entry').waitFor(); await frames(page);
       const after = await layout(page);
       assert.equal(after.hidden, false); assert.equal(after.visibility, 'visible');
-      for (const name of ['frame', 'output', 'entry', 'intro', 'header', 'input']) {
+      for (const name of ['frame', 'output', 'entry', 'intro', 'header', 'input', 'link']) {
         for (const dimension of ['x', 'y', 'width', 'height']) {
           assert.ok(Math.abs(before[name][dimension] - after[name][dimension]) < .5,
             `${label}: ${name}.${dimension} stays stable (${before[name][dimension]}, ${after[name][dimension]})`);

@@ -1,5 +1,5 @@
 import {FILES, LIMITS, Session, completions, execute} from './engine.js';
-import {parseLocation, entryURL, navigationState, navigationCwd} from './routing.js';
+import {parseLocation, entryURL, pageLink, isDocumentHash, navigationState, navigationCwd} from './routing.js';
 import {createSnakePlayer} from './snake.js';
 
 const $ = id => document.getElementById(id);
@@ -22,8 +22,9 @@ const snakePlayer = createSnakePlayer(window, visible => terminal.classList.togg
 const views = new Map(Array.from(document.querySelectorAll('template'), template =>
   [template.dataset.view, template.content.firstElementChild]));
 views.set(output.dataset.route || '/README.md', output.firstElementChild.cloneNode(true));
-const siteLinks = document.querySelector('.site-nav').querySelectorAll('a');
-const ownerTitle = document.querySelector('.site-name').textContent;
+const relatedLink = $('page-link');
+let masthead = document.querySelector('.site-name');
+const ownerTitle = masthead.textContent;
 const session = new Session();
 let choices = [];
 let selectedChoice = -1;
@@ -179,7 +180,7 @@ function renderResult(parent, result) {
     ]) list.append(element('dt', command), element('dd', description));
     parent.append(list);
     const hint = element('p', 'Try ');
-    hint.append(commandButton('cat README.md'), ' or ', commandButton('open README.md'), '.');
+    hint.append(commandButton('ls /projects'), ' or ', commandButton('open /README.md'), '.');
     parent.append(hint);
   } else if (result.kind === 'list') {
     const list = element('div', undefined, 'listing');
@@ -198,7 +199,8 @@ function renderResult(parent, result) {
     parent.append(list);
   } else if (result.kind === 'file') {
     const path = element('div', result.path, 'file-path');
-    const link = element('a', 'Link to this document', 'document-link');
+    const link = element('a', 'Permalink', 'document-link');
+    link.setAttribute('aria-label', `Permalink to ${result.entry.title}`);
     link.href = entryURL(result.path);
     link.dataset.page = '';
     path.append(' · ', link);
@@ -206,6 +208,11 @@ function renderResult(parent, result) {
     const content = views.get(result.path).cloneNode(true);
     if (content.querySelector('h1')?.textContent !== result.entry.title) {
       parent.append(element('h2', result.entry.title, 'file-title'));
+    }
+    for (const title of content.querySelectorAll('h1')) {
+      const heading = element('h2');
+      heading.append(...title.childNodes);
+      title.replaceWith(heading);
     }
     content.removeAttribute('aria-label'); // The enclosing result already names the document.
     parent.append(content);
@@ -240,6 +247,7 @@ function showResult(result, prefix, raw, mode, showEcho = true) {
   let block;
   if (result.kind === 'clear') {
     output.replaceChildren();
+    setMasthead('h1');
     reading.reset();
   } else {
     block = element('section', undefined, 'block');
@@ -253,7 +261,10 @@ function showResult(result, prefix, raw, mode, showEcho = true) {
     block.append(body);
     output.append(block);
     if (result.kind === 'snake') snakePlayer.play(body.firstElementChild);
-    while (output.children.length > LIMITS.output) output.firstElementChild.remove();
+    while (output.children.length > LIMITS.output) {
+      output.firstElementChild.remove();
+      setMasthead('h1');
+    }
     // Reveal synchronously: a later reader scroll must never be overwritten.
     reading.reveal(block);
   }
@@ -266,14 +277,20 @@ function routeSignature(route, cwd) {
   return `${route.kind}:${route.path || ''}:${cwd}`;
 }
 
+function setMasthead(tag) {
+  if (masthead.tagName.toLowerCase() === tag) return;
+  const next = element(tag, ownerTitle, masthead.className);
+  masthead.replaceWith(next);
+  masthead = next;
+}
+
 function updatePage(route) {
   const title = route.path && route.path !== '/README.md' ? FILES[route.path]?.title : '';
-  document.title = title ? `${title} | ${ownerTitle}` : ownerTitle;
-  for (const link of siteLinks) {
-    const current = link.getAttribute('href') === '/' ? !route.path?.startsWith('/projects') : route.path?.startsWith('/projects');
-    if (current) link.setAttribute('aria-current', route.path?.startsWith('/projects/') ? 'true' : 'page');
-    else link.removeAttribute('aria-current');
-  }
+  const pageTitle = title ? `${title} | ${ownerTitle}` : ownerTitle;
+  if (document.title !== pageTitle) document.title = pageTitle;
+  const {href, label} = pageLink(route.path);
+  if (relatedLink.getAttribute('href') !== href) relatedLink.setAttribute('href', href);
+  if (relatedLink.textContent !== label) relatedLink.textContent = label;
 }
 
 function writeNavigation(method, path, url = window.location.pathname + window.location.search + window.location.hash) {
@@ -433,6 +450,7 @@ terminal.addEventListener('click', event => {
   if (link && link.hasAttribute('data-page') && !event.defaultPrevented &&
       event.button === 0 && !modified(event) && !link.getAttribute('target') && !link.hasAttribute('download')) {
     const url = new URL(link.href, window.location.href);
+    if (url.hash && !isDocumentHash(url.hash)) return; // Native section scrolling.
     const route = parseLocation(url);
     if (url.origin === window.location.origin && route.kind !== 'invalid') {
       // Only generated local links enter the application. Modified clicks retain
@@ -505,7 +523,18 @@ $('read-output').addEventListener('click', () => screen.focus({preventScroll: tr
 
 function navigate(initial = false) {
   const route = parseLocation(window.location);
-  const cwd = navigationCwd(window.history.state, route.path);
+  // Native fragments can create a history entry without state. A section jump
+  // retains the transcript and focus, but Back still restores a saved directory.
+  const samePage = !initial && !isDocumentHash(window.location.hash) &&
+    lastNavigation === routeSignature(route, session.cwd);
+  const cwd = samePage && window.history.state === null ? session.cwd
+    : navigationCwd(window.history.state, route.path);
+  if (samePage) {
+    if (session.cwd !== cwd) { session.cwd = cwd; updatePrompt(); }
+    lastNavigation = routeSignature(route, cwd);
+    rememberCurrentCwd();
+    return;
+  }
   const signature = routeSignature(route, cwd);
   if (!initial && signature === lastNavigation) return;
   setTools(false, false);
@@ -522,13 +551,20 @@ function navigate(initial = false) {
     rememberCurrentCwd();
     return;
   }
-  if (route.kind === 'home' || route.kind === 'directory' ||
-      (route.kind === 'file' && (!window.location.hash || window.location.hash === '#'))) {
+  if (route.kind !== 'invalid' && !isDocumentHash(window.location.hash)) {
+    masthead.classList.toggle('site-owner', route.kind !== 'home');
+    setMasthead(route.kind === 'home' ? 'h1' : 'p');
     output.replaceChildren(views.get(route.path || '/README.md').cloneNode(true));
     reading.reset();
-    if (!initial) { screen.focus({preventScroll: true}); announce(`${route.kind === 'home' ? 'README.md' : FILES[route.path].title}. Command history retained.`); }
+    if (!initial && (!window.location.hash || window.location.hash === '#')) {
+      const heading = route.kind === 'home' ? masthead : output.querySelector('h1');
+      const target = !heading || (heading === masthead && terminal.classList.contains('compact')) ? screen : heading;
+      if (target !== screen) target.tabIndex = -1;
+      target.focus({preventScroll: true});
+      announce(target === screen ? (route.kind === 'home' ? 'Home' : FILES[route.path].title) : '');
+    }
   } else {
-    if (initial) output.replaceChildren();
+    if (initial) { output.replaceChildren(); setMasthead('h1'); }
     const result = route.kind === 'file' ? execute(`open ${route.path}`, cwd) : {
       kind: 'error', message: 'This document link is not available.',
       hint: 'Use ls / to browse the available files.', suggestions: ['ls /']

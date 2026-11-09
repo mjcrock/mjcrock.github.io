@@ -151,7 +151,7 @@ test('only supported heading tags and HTTPS links become markup', async t => {
   const generated = await roundTrip(await fixture(t, source), source);
   assert.ok(generated.includes('<h1>One</h1><h2>Two</h2><h3>Three</h3><p>#### Plain</p>'));
   assert.ok(generated.includes('[bad](javascript:alert%281%29) [relative](README.md)'));
-  const visible = generated.slice(generated.indexOf('<div id="output"'), generated.indexOf('<template'));
+  const visible = generated.slice(generated.indexOf('<div id="output"'), generated.indexOf('<nav'));
   assert.equal((visible.match(/<a /g) || []).length, 1);
 });
 
@@ -214,10 +214,19 @@ test('unsupported CLI arguments reject without changing files', async t => {
 test('each public page shows its current view, embeds each other view once, and preserves exact sources', async t => {
   const template = await readFile(new URL('../index.html', import.meta.url), 'utf8');
   const project = await fixture(t, 'Home introduction.\n', template);
-  for (const [path, route] of [['/', ''], ['/projects/', '/projects'], ['/projects/textbook/', '/' + textbookPath]]) {
+  for (const [path, route, href, label] of [
+    ['/', '', '/projects/', 'Browse projects'],
+    ['/projects/', '/projects', '/', 'Home'],
+    ['/projects/textbook/', '/' + textbookPath, '/projects/', 'All projects'],
+  ]) {
     const html = await project.render(path);
-    const visible = html.slice(html.indexOf('<div id="output"'), html.indexOf('<template'));
+    const live = html.slice(0, html.indexOf('<template'));
+    const visible = live.slice(live.indexOf('<div id="output"'), live.indexOf('<nav'));
     assert.ok(visible.includes(`data-route="${route}"`));
+    assert.ok(visible.trimEnd().endsWith('</section></div>'), 'Page navigation follows the output region');
+    assert.equal((live.match(/<h1\b/g) || []).length, 1, 'The standalone page has one primary heading');
+    assert.deepEqual([...live.matchAll(/<nav\b[^>]*>([\s\S]*?)<\/nav>/g)].map(match => match[1]),
+      [`<a id="page-link" class="document-link" href="${href}" data-page="">${label}</a>`]);
     assert.deepEqual(JSON.parse(rawJSON(html)), {'/README.md': 'Home introduction.\n', ['/' + textbookPath]: textbook});
     const templates = [...html.matchAll(/<template data-view="([^"]+)">([\s\S]*?)<\/template>/g)];
     assert.deepEqual(templates.map(match => match[1]).sort(),
@@ -229,16 +238,18 @@ test('each public page shows its current view, embeds each other view once, and 
     assert.match(html, /name="robots" content="noindex,nofollow"/);
     if (path === '/') {
       assert.ok(visible.includes('<p>Home introduction.</p>'));
+      assert.match(live, /<h1 class="site-name">Michael J\. Crockett<\/h1>/);
       assert.ok(!visible.includes('Mathematics for Cyber Threat Detection'));
       assert.match(html, /<title>Michael J\. Crockett<\/title>/);
       assert.match(html, /href="style\.css"/);
     } else {
+      assert.match(live, /<p class="site-name site-owner">Michael J\. Crockett<\/p>/);
       for (const name of ['style.css', 'app.js', 'engine.js', 'routing.js', 'snake.js', 'favicon.png', 'apple-touch-icon.png']) {
         assert.ok(html.includes(`="/${name}"`), `Nested assets resolve from the root: ${name}`);
       }
       assert.ok(!visible.includes('Home introduction.'));
       if (path === '/projects/') {
-        assert.match(visible, /<h2>Projects<\/h2>/);
+        assert.match(visible, /<h1>Projects<\/h1>/);
         assert.match(visible, /data-page="" href="\/projects\/textbook\/">Mathematics for Cyber Threat Detection<\/a>/);
         assert.match(visible, /<p class="dim">Textbook · In progress<\/p>/);
         assert.match(html, /<title>Projects \| Michael J\. Crockett<\/title>/);
