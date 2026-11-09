@@ -9,7 +9,7 @@ supplies the separate textbook page.
 Edit `projects/textbook/README.md` to update *Mathematics for Cyber Threat
 Detection* at `/projects/textbook/`. When the textbook is available, add a
 Markdown link labeled “Read the textbook” with its absolute HTTPS URL to that
-file. Visitors reach the page through the Projects link and the index at
+file. Visitors reach the page through “Browse projects” and the index at
 `/projects/`. The public catalog in `engine.js` supplies the directory entries
 and listing labels.
 
@@ -33,6 +33,20 @@ prints its exact source. Path completion uses the same directory entries.
 A direct visit starts the terminal in the page's directory. Internal navigation
 keeps the current draft and command history, and Back and Forward restore the
 working directory saved for each page.
+One contextual link follows the content in the scrolling pane and remains
+available after `clear`. Home offers “Browse projects”, the textbook offers
+“All projects”, and the Projects index links home. The shared route catalog
+supplies the same destinations for generated HTML and interactive navigation.
+Ordinary section fragments use native browser navigation. Only `#/…` document
+fragments enter the legacy document router. Section jumps retain the current
+transcript and draft, while Back and Forward still restore saved directories.
+Help examples use absolute paths so their destinations remain stable after `cd`.
+
+Standalone pages focus their heading after in-page navigation, with the reading
+pane as a fallback when the heading is hidden or absent. Direct visits do not
+move focus. Inner pages give the page title priority over the quieter owner name.
+Clearing or pruning the transcript preserves that masthead's size and color.
+Document headings rendered inside command results use level two.
 
 Both documents support paragraphs, level 1–3 headings, and absolute HTTPS links.
 HTTP, relative URLs, credentials and unsafe URL characters are

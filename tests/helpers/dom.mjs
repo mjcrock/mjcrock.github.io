@@ -111,6 +111,13 @@ export async function createApp({root = new URL('../../', import.meta.url), widt
       this._text = '';
       this.append(...nodes);
     }
+    replaceWith(node) {
+      if (!this.parentNode || node === this) return;
+      node.remove();
+      node.parentNode = this.parentNode;
+      this.parentNode.childNodes.splice(this.parentNode.childNodes.indexOf(this), 1, node);
+      this.parentNode = null;
+    }
     cloneNode(deep = false) {
       const clone = new Node(this.nodeType === 3 ? '#text' : this.tagName, this._text);
       for (const key of ['className', 'id', 'href', 'tabIndex', 'hidden', 'disabled']) clone[key] = this[key];
@@ -207,12 +214,10 @@ export async function createApp({root = new URL('../../', import.meta.url), widt
     return node;
   };
   const terminal = make('main', '', document.body, 'terminal');
-  if (markup.includes('class="site-name"')) {
+  const siteName = markup.match(/<(h1|p) class="(site-name[^"]*)"[^>]*>([^<]*)<\/\1>/u);
+  if (siteName) {
     const header = make('header', '', terminal, 'bar');
-    for (const [tag, className] of [['h1', 'site-name'], ['p', 'site-status']]) {
-      const text = markup.match(new RegExp(`<${tag} class="${className}">([^<]+)</${tag}>`, 'u'))?.[1];
-      make(tag, '', header, className).textContent = text ?? '';
-    }
+    make(siteName[1], '', header, siteName[2]).textContent = decode(siteName[3]);
   }
   const screen = make('div', 'screen', terminal, 'screen');
   // Parse only the generator's escaped static subset, independently of its
@@ -233,8 +238,6 @@ export async function createApp({root = new URL('../../', import.meta.url), widt
       } else stack.at(-1).append(decode(token));
     }
   };
-  const navigation = markup.match(/<nav class="site-nav"[\s\S]*?<\/nav>/u)?.[0];
-  if (navigation) parseStatic(navigation);
   const region = markup.match(/<!-- BEGIN GENERATED README -->([\s\S]*?)<!-- END GENERATED README -->/u)?.[1] ?? '';
   const dataPattern = /<script id="([\w-]+)" type="application\/json">([\s\S]*?)<\/script>/gu;
   parseStatic(region.replace(dataPattern, ''));

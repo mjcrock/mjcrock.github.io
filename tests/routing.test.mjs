@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
 import {FILES, LIMITS} from '../engine.js';
-import {parseDocumentHash, documentHash, entryURL, parseLocation, navigationState, navigationCwd} from '../routing.js';
+import {parseDocumentHash, documentHash, entryURL, pageLink, isDocumentHash, parseLocation, navigationState, navigationCwd} from '../routing.js';
 
 const paths = Object.keys(FILES).filter(path => FILES[path].type === 'file');
 
@@ -80,6 +80,15 @@ test('public entry URLs are short, fixed, and independent of the current page', 
   }
 });
 
+test('related links connect the three pages through known public URLs', () => {
+  for (const path of [null, '/', '/README.md']) {
+    assert.deepEqual(pageLink(path), {href: '/projects/', label: 'Browse projects'});
+  }
+  assert.deepEqual(pageLink('/projects'), {href: '/', label: 'Home'});
+  assert.deepEqual(pageLink('/projects/textbook/README.md'), {href: '/projects/', label: 'All projects'});
+  assert.deepEqual(pageLink('/projects/missing'), {href: '/', label: 'Home'});
+});
+
 test('clean pages and explicit index aliases resolve to their intended views', () => {
   for (const [pathname, kind, path] of [
     ['/', 'home', null], ['/index.html', 'home', null],
@@ -99,7 +108,20 @@ test('legacy fragments resolve on known pages without becoming commands', () => 
     for (const path of paths) {
       assert.deepEqual(parseLocation({pathname, hash: documentHash(path)}), {kind: 'file', path});
     }
-    assert.deepEqual(parseLocation({pathname, hash: '#clear'}), {kind: 'invalid', path: null});
+    assert.deepEqual(parseLocation({pathname, hash: '#%2fREADME.md'}), {kind: 'file', path: '/README.md'});
+    for (const hash of ['#/missing', '#%2Fprojects%2F..%2FREADME.md', '#/%GG']) {
+      assert.equal(isDocumentHash(hash), true);
+      assert.deepEqual(parseLocation({pathname, hash}), {kind: 'invalid', path: null});
+    }
+  }
+});
+
+test('ordinary fragments stay within their published page and never select a terminal document', () => {
+  for (const pathname of ['/', '/projects/index.html', '/projects/textbook/']) {
+    for (const hash of ['#screen', '#overview', '#clear', '#heading%20one', '#%', '#%252FREADME.md']) {
+      assert.equal(isDocumentHash(hash), false);
+      assert.deepEqual(parseLocation({pathname, hash}), parseLocation({pathname}));
+    }
   }
 });
 
@@ -113,7 +135,7 @@ test('unknown and malformed page paths fail closed before considering a legacy h
     assert.deepEqual(parseLocation({pathname, hash}), {kind: 'invalid', path: null});
   }
   for (const location of [null, false, 1, '']) assert.deepEqual(parseLocation(location), {kind: 'invalid', path: null});
-  for (const hash of [null, false, 1, {}, '#%', '#%2e%2e%2fREADME.md']) {
+  for (const hash of [null, false, 1, {}, 'missing-leading-hash']) {
     assert.deepEqual(parseLocation({pathname: '/projects/textbook/', hash}), {kind: 'invalid', path: null});
   }
 });

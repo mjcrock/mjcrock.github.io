@@ -38,8 +38,8 @@ export async function checkAlignment(browser, url, engine) {
       const rail = intro.x;
       if (await page.locator('.bar').isVisible()) {
         close((await textGeometry(page.locator('.site-name'))).x, rail, label + ' masthead');
-        close((await textGeometry(page.locator('.site-status'))).x, rail, label + ' status');
       }
+      close((await textGeometry(page.locator('#page-link'))).x, rail, label + ' contextual page link');
       close((await textGeometry(page.locator('.initial-document a').first())).x, rail, label + ' identity link');
       await run('ls'); await input.fill('ls');
       const echo = page.locator('.echo').last();

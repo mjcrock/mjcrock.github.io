@@ -4,7 +4,7 @@ import {sep} from 'node:path';
 import {fileURLToPath, pathToFileURL} from 'node:url';
 import {markdownBlocks} from '../markdown.js';
 import {FILES, list} from '../engine.js';
-import {entryURL, parseLocation} from '../routing.js';
+import {entryURL, pageLink, parseLocation} from '../routing.js';
 
 const start = '<!-- BEGIN GENERATED README -->';
 const end = '<!-- END GENERATED README -->';
@@ -60,7 +60,7 @@ export async function renderIndex(root = new URL('../', import.meta.url), pathna
       const status = project.description ? `<p class="dim">${escapeHTML(project.description)}</p>` : '';
       return `<li class="project-row"><a class="document-link" data-page="" href="${escapeHTML(entryURL(child))}">${escapeHTML(label)}</a>${status}</li>`;
     });
-    views[path] = `<section class="initial-directory" aria-label="${title}"><h2>${title}</h2><ul class="project-list">${rows.join('')}</ul></section>`;
+    views[path] = `<section class="initial-directory" aria-label="${title}"><h1>${title}</h1><ul class="project-list">${rows.join('')}</ul></section>`;
   }
   const literal = JSON.stringify(sources).replace(/[<\u2028\u2029]/gu, character =>
     `\\u${character.charCodeAt(0).toString(16).padStart(4, '0')}`);
@@ -77,12 +77,15 @@ export async function renderIndex(root = new URL('../', import.meta.url), pathna
     throw new Error('The generated README region in source index.html must be empty.');
   }
   const current = route.path || '/README.md';
+  const {href, label} = pageLink(route.path);
+  const navigation = `<nav class="page-nav" aria-label="Site"><a id="page-link" class="document-link" href="${escapeHTML(href)}" data-page="">${escapeHTML(label)}</a></nav>`;
   const templates = Object.entries(views).filter(([path]) => path !== current)
     .map(([path, view]) => `<template data-view="${escapeHTML(path)}">${view}</template>`).join('\n');
-  const generated = `${start}\n<div id="output" data-route="${escapeHTML(route.path || '')}">${views[current]}</div>\n${templates}\n<script id="document-sources" type="application/json">${literal}</script>\n${end}`;
+  const generated = `${start}\n<div id="output" data-route="${escapeHTML(route.path || '')}">${views[current]}</div>\n${navigation}\n${templates}\n<script id="document-sources" type="application/json">${literal}</script>\n${end}`;
   let page = html.slice(0, first) + generated + html.slice(last + ends[0][0].length);
   if (route.kind !== 'home') {
     const title = escapeHTML(FILES[route.path].title);
+    page = page.replace(/<h1 class="site-name">([^<]*)<\/h1>/, '<p class="site-name site-owner">$1</p>');
     page = page.replace(/<title>([^<]*)<\/title>/, (_, owner) => `<title>${title} | ${owner}</title>`);
     page = page.replace(/(<meta name="description" content=")[^"]*(">)/, (_, before, after) =>
       before + (route.kind === 'file' ? `${title}. Textbook in progress.` : 'Selected projects.') + after);

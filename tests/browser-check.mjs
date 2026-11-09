@@ -70,7 +70,7 @@ try {
       await run('open README.md');
       assert.equal(new URL(page.url()).hash, '#/README.md');
       await input.fill('draft while browsing');
-      await page.getByRole('button', {name: 'open README.md', exact: true}).click();
+      await page.getByRole('button', {name: 'open /README.md', exact: true}).click();
       assert.equal(await input.inputValue(), 'draft while browsing', 'Opening a document preserves an unfinished command');
       await run('ls /');
       assert.deepEqual(await page.locator('.block').last().locator('.listing-row button').allTextContents(), ['README.md', 'projects/']);
@@ -363,7 +363,9 @@ try {
           return rect.left >= bar.left - 1 && rect.right <= bar.right + 1;
         }), true, 'Even at enlarged text the last shortcut remains reachable');
         assert.equal(await compact.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
-        await compact.locator('.screen').evaluate(node => { node.scrollTop = node.scrollHeight; });
+        // The contextual page link follows the transcript, so the last help
+        // example need not coincide with the scroll pane's absolute bottom.
+        await compact.locator('.block').last().locator('.inline-command').last().scrollIntoViewIfNeeded();
         await frames(compact);
         assert.equal(await compact.locator('.block').last().locator('.inline-command').last().evaluate(node => {
           const rect = node.getBoundingClientRect(), screen = document.querySelector('.screen').getBoundingClientRect();
@@ -704,8 +706,7 @@ try {
       });
       assert.equal(firstView.overflows, true, 'The initial deep-link fixture really needs scrolling');
       assert.ok(firstView.top >= 0 && firstView.top <= 12, 'A first deep link is positioned using final mobile geometry');
-      // The site links precede the transcript, so revealing a legacy fragment
-      // can scroll immediately. Its final position must not change next frame.
+      // Revealing the legacy fragment must use the initial layout and then settle.
       await frames(deep);
       assert.equal(await deep.locator('.screen').evaluate(node => node.scrollTop), firstView.scroll,
         'Startup cannot leave a delayed scroll correction');

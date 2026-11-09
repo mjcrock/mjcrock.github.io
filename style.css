@@ -74,12 +74,11 @@ button:focus-visible,a:focus-visible,input:focus-visible,.screen:focus-visible {
 }
 
 .bar-content {
-  min-height: 84px;
+  min-height: 64px;
   display: flex;
   flex-direction: column;
   align-items: flex-start;
   justify-content: center;
-  gap: 5px;
   border-bottom: 1px solid var(--line);
   padding: 14px var(--content-inset);
 }
@@ -408,7 +407,6 @@ form:focus-within {
     box-shadow: none;
   }
   .bar-content {
-    min-height: 84px;
     padding: 12px var(--content-inset);
     font-size: .76rem;
   }
@@ -510,13 +508,13 @@ form:focus-within {
     min-height: 180px;
   }
   .bar-content {
-    min-height: 64px;
+    min-height: 48px;
     padding-block: 8px;
   }
   .screen {
     padding-block: 12px;
   }
-  .terminal .site-name {
+  .terminal .site-name:not(.site-owner) {
     font-size: 1.2rem;
   }
 }
@@ -777,11 +775,11 @@ form:focus-within {
   letter-spacing: -.025em;
 }
 
-.site-status {
-  margin: 0;
+.site-name.site-owner {
   color: var(--muted);
-  font-size: .75rem;
-  line-height: 1.4;
+  font-size: 1rem;
+  font-weight: 400;
+  letter-spacing: normal;
 }
 
 .initial-document {
@@ -798,28 +796,22 @@ form:focus-within {
   margin-top: .75rem;
 }
 
-.site-nav {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0 1.5rem;
-  margin-bottom: 1rem;
-  font-size: .85rem;
+.page-nav {
+  margin-top: .65rem;
+  font-size: .9rem;
 }
-.site-nav a,.project-row > a {
+.page-nav a,.project-row > a {
   display: inline-flex;
   align-items: center;
   min-height: 44px;
   min-width: 44px;
-}
-.site-nav [aria-current] {
-  color: var(--ink);
 }
 .initial-directory {
   font-size: .95rem;
   line-height: 1.7;
   overflow-wrap: anywhere;
 }
-.initial-document h1,.initial-directory h2 {
+.initial-document h1,.initial-document h2,.initial-directory h1 {
   margin: 0 0 .75em;
   font-size: 1.2em;
   font-weight: 500;
@@ -830,8 +822,8 @@ form:focus-within {
   padding: 0;
   margin: 0;
 }
-.project-row {
-  margin-bottom: 1rem;
+.project-row + .project-row {
+  margin-top: 1rem;
 }
 .project-row p {
   margin: 0;
